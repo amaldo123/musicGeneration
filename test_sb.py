@@ -8,8 +8,10 @@ from core_types import BeatState, Edge, EndpointDistribution, Layer
 from graph import GraphDiagnostics, LayerBuildDiagnostics, SparseGraph
 from sb import (
     SBContractError,
+    SBSolverError,
     _IndexedEdgeBucket,
     _NumpySBBackend,
+    _require_non_empty_log_support,
     build_sb_problem,
     solve_sb,
 )
@@ -311,6 +313,14 @@ class TestSBProblemContract(unittest.TestCase):
 
 
 class TestSparseBackendHelpers(unittest.TestCase):
+    def test_logsumexp_underflow_guard_checks_relative_shift(self):
+        with self.assertRaises(SBSolverError):
+            _NumpySBBackend.logsumexp(
+                np.asarray((0.0, -200.0), dtype=float),
+                underflow_floor=-100.0,
+                context="unit_test_relative_shift",
+            )
+
     def test_reduce_by_source_matches_dense_reference(self):
         bucket = _IndexedEdgeBucket(
             time_index=0,
@@ -355,6 +365,13 @@ class TestSparseBackendHelpers(unittest.TestCase):
         expected_0 = math.log(0.6 * 0.5 + 0.2 * 0.4 + 0.1 * 0.9)
         expected_1 = math.log(0.7 * 0.9)
         self.assertTrue(np.allclose(reduced, np.asarray((expected_0, expected_1))))
+
+    def test_empty_support_guard_rejects_all_negative_inf(self):
+        with self.assertRaises(SBSolverError):
+            _require_non_empty_log_support(
+                "test_values",
+                np.asarray((float("-inf"), float("-inf")), dtype=float),
+            )
 
 
 class TestSBSolver(unittest.TestCase):
@@ -420,6 +437,33 @@ class TestSBSolver(unittest.TestCase):
         self.assertEqual(solution.trace.iterations, 1)
         self.assertFalse(solution.trace.converged)
         self.assertGreater(solution.trace.final_max_delta, 0.0)
+
+    def test_solve_sb_can_raise_on_non_convergence_when_configured(self):
+        graph, pi0, piT = _branching_graph()
+        problem = build_sb_problem(
+            graph,
+            pi0,
+            piT,
+            sb_config=SBConfig(
+                horizon_t=2,
+                max_iterations=1,
+                tolerance=1e-15,
+                raise_on_non_convergence=True,
+            ),
+        )
+
+        with self.assertRaises(SBSolverError):
+            solve_sb(problem)
+
+    def test_solve_sb_raises_when_underflow_floor_is_crossed(self):
+        graph, pi0, piT = _valid_graph()
+        with self.assertRaises(ValueError):
+            build_sb_problem(
+                graph,
+                pi0,
+                piT,
+                sb_config=SBConfig(horizon_t=2, log_underflow_floor=1.0),
+            )
 
     def test_solve_sb_rejects_unsupported_backend(self):
         graph, pi0, piT = _valid_graph()
