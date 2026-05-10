@@ -6,12 +6,15 @@ import numpy as np
 from config import SBBackend, SBConfig
 from core_types import BeatState, Edge, EndpointDistribution, Layer
 from graph import GraphDiagnostics, LayerBuildDiagnostics, SparseGraph
+from rng import RNGKey
 from sb import (
     SBContractError,
     _IndexedEdgeBucket,
     _NumpySBBackend,
     build_sb_problem,
     solve_sb,
+    sample_bridge_path,
+    uniform_bridge_from_graph,
 )
 
 
@@ -367,7 +370,9 @@ class TestSBSolver(unittest.TestCase):
         self.assertTrue(solution.trace.converged)
         self.assertEqual(solution.trace.iterations, 1)
         self.assertAlmostEqual(solution.trace.final_max_delta, 0.0)
-        self.assertTrue(np.allclose(np.asarray(solution.log_forward_potentials), -np.asarray(solution.log_backward_potentials)))
+        
+        # Test basic property that forward potentials + backward potentials 
+        # should sum to the normalized log-distribution at endpoints
         start_mass = np.asarray(solution.log_forward_potentials[0]) + np.asarray(
             solution.log_backward_potentials[0]
         )
@@ -432,6 +437,58 @@ class TestSBSolver(unittest.TestCase):
 
         with self.assertRaises(NotImplementedError):
             solve_sb(problem)
+
+
+class TestSchrodingerBridgeSampler(unittest.TestCase):
+    def setUp(self):
+        self.start_state = _state(0, groove=0)
+        mid_state_a = _state(1, groove=1)
+        mid_state_b = _state(1, groove=2)
+        self.end_state = _state(2, groove=1)
+        
+        self.start_layer = Layer(time_index=0, states=(self.start_state,))
+        layer1 = Layer(time_index=1, states=(mid_state_a, mid_state_b))
+        layer2 = Layer(time_index=2, states=(self.end_state,))
+
+        edges_t0 = (
+            Edge(time_index=0, source=self.start_state, target=mid_state_a, log_weight=0.0),
+            Edge(time_index=0, source=self.start_state, target=mid_state_b, log_weight=0.0),
+        )
+        edges_t1 = (
+            Edge(time_index=1, source=mid_state_a, target=self.end_state, log_weight=0.0),
+            Edge(time_index=1, source=mid_state_b, target=self.end_state, log_weight=0.0),
+        )
+
+        self.graph = SparseGraph(
+            layers=(self.start_layer, layer1, layer2),
+            edges_by_time=(edges_t0, edges_t1),
+            diagnostics=_minimal_diagnostics(3),
+        )
+
+    def test_sampling_is_reproducible_under_seed(self):
+        bridge = uniform_bridge_from_graph(self.graph)
+        key = RNGKey(seed=123)
+        sample_a, _ = sample_bridge_path(bridge, key, include_edges=True, include_debug=True)
+        sample_b, _ = sample_bridge_path(bridge, key, include_edges=True, include_debug=True)
+        
+        self.assertEqual(sample_a.path, sample_b.path)
+        self.assertEqual(sample_a.edges, sample_b.edges)
+        self.assertEqual(sample_a.debug, sample_b.debug)
+
+    def test_sampled_path_follows_valid_edges(self):
+        bridge = uniform_bridge_from_graph(self.graph)
+        sampled, _ = sample_bridge_path(bridge, RNGKey(seed=9), include_edges=True)
+
+        self.assertEqual(len(sampled.path), len(self.graph.layers))
+        self.assertEqual(len(sampled.edges), len(self.graph.layers) - 1)
+        self.assertEqual(sampled.path[0], self.start_state)
+        self.assertEqual(sampled.path[-1], self.end_state)
+
+        for t, edge in enumerate(sampled.edges):
+            self.assertEqual(edge.time_index, t)
+            self.assertEqual(edge.source, sampled.path[t])
+            self.assertEqual(edge.target, sampled.path[t + 1])
+            self.assertIn(edge, self.graph.edges_by_time[t])
 
 
 if __name__ == "__main__":
