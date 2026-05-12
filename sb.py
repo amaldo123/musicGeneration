@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
 from config import SBBackend, SBConfig
 from core_types import BeatState, Edge, EndpointDistribution, Layer
 from graph import SparseGraph
+from rng import RNGKey, random_unit
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,45 @@ class SBConvergenceTrace:
 
 
 @dataclass(frozen=True)
+class SolvedBridge:
+    """Solved Schrödinger bridge represented by conditioned transition probabilities.
+
+    `edge_probabilities_by_time[t][i]` aligns with `graph.edges_by_time[t][i]` and encodes
+    (possibly unnormalized) probability mass for taking that edge under the solved bridge.
+    """
+
+    graph: SparseGraph
+    edge_probabilities_by_time: tuple[tuple[float, ...], ...]
+    initial_distribution: EndpointDistribution | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.graph, SparseGraph):
+            raise TypeError("graph must be a SparseGraph.")
+        edge_probs = tuple(tuple(float(p) for p in group) for group in self.edge_probabilities_by_time)
+        if len(edge_probs) != len(self.graph.edges_by_time):
+            raise ValueError("edge_probabilities_by_time must align with graph.edges_by_time.")
+        for t, (edges, probs) in enumerate(zip(self.graph.edges_by_time, edge_probs)):
+            if len(edges) != len(probs):
+                raise ValueError(
+                    f"edge_probabilities_by_time[{t}] must align 1:1 with graph.edges_by_time[{t}]."
+                )
+            _require_probs(f"edge_probabilities_by_time[{t}]", probs)
+        object.__setattr__(self, "edge_probabilities_by_time", edge_probs)
+
+        if self.initial_distribution is not None and self.initial_distribution.layer != self.graph.layers[0]:
+            raise ValueError("initial_distribution.layer must match graph.layers[0].")
+
+
+@dataclass(frozen=True)
+class SampledBridgePath:
+    """A single sampled trajectory through the bridge."""
+
+    path: tuple[BeatState, ...]
+    edges: tuple[Edge, ...] = ()
+    debug: tuple[Mapping[str, object], ...] = ()
+
+
+@dataclass(frozen=True)
 class SBSolution:
     """Solved log-space SB potentials aligned with the graph layers."""
 
@@ -86,6 +126,35 @@ class SBSolution:
 
         object.__setattr__(self, "log_forward_potentials", forward)
         object.__setattr__(self, "log_backward_potentials", backward)
+
+    def to_bridge(self) -> SolvedBridge:
+        """Converts potentials into conditioned transition probabilities for sampling."""
+        graph = self.problem.graph
+        layers = graph.layers
+        temp = self.problem.sb_config.temperature
+        
+        all_edge_probs: list[tuple[float, ...]] = []
+        
+        for t, edge_group in enumerate(graph.edges_by_time):
+            # Conditioned probability P(v|u) \propto K(u,v) * exp(backward_potential(v))
+            target_potentials = self.log_backward_potentials[t + 1]
+            target_states_to_idx = {state: i for i, state in enumerate(layers[t + 1].states)}
+            
+            layer_edge_probs = []
+            for edge in edge_group:
+                target_idx = target_states_to_idx[edge.target]
+                # Log weight is already divided by temperature in the indexing step usually, 
+                # but we follow the solve_sb indexing logic here:
+                log_val = (edge.log_weight / temp) + target_potentials[target_idx]
+                layer_edge_probs.append(float(np.exp(log_val)))
+            
+            all_edge_probs.append(tuple(layer_edge_probs))
+            
+        return SolvedBridge(
+            graph=graph,
+            edge_probabilities_by_time=tuple(all_edge_probs),
+            initial_distribution=self.problem.pi0
+        )
 
 
 @dataclass(frozen=True)
@@ -641,3 +710,119 @@ def solve_sb(problem: SBProblem) -> SBSolution:
         log_backward_potentials=_tuplify_layers(backward),
         trace=trace,
     )
+
+
+# --- Pure Path Sampling Implementation ---
+
+def _require_probs(name: str, values: Sequence[float]) -> tuple[float, ...]:
+    probs = tuple(float(value) for value in values)
+    if not probs:
+        raise ValueError(f"{name} must not be empty.")
+    for idx, prob in enumerate(probs):
+        if not isfinite(prob):
+            raise ValueError(f"{name}[{idx}] must be finite.")
+        if prob < 0.0:
+            raise ValueError(f"{name}[{idx}] must be >= 0.")
+    total = sum(probs)
+    if total <= 0.0:
+        raise ValueError(f"{name} must have positive total mass.")
+    return probs
+
+
+def _sample_categorical(key: RNGKey, probs: Sequence[float]) -> tuple[int, RNGKey]:
+    normalized = _require_probs("probs", probs)
+    total = float(sum(normalized))
+    threshold, next_key = random_unit(key)
+    cutoff = threshold * total
+    running = 0.0
+    for idx, prob in enumerate(normalized):
+        running += prob
+        if cutoff <= running:
+            return idx, next_key
+    return len(normalized) - 1, next_key
+
+
+def _build_conditioned_transition_table(
+    graph: SparseGraph, edge_probabilities_by_time: tuple[tuple[float, ...], ...]
+) -> tuple[dict[BeatState, tuple[tuple[Edge, ...], tuple[float, ...]]], ...]:
+    tables: list[dict[BeatState, tuple[tuple[Edge, ...], tuple[float, ...]]]] = []
+    for edges, probs in zip(graph.edges_by_time, edge_probabilities_by_time):
+        by_source: dict[BeatState, list[tuple[Edge, float]]] = {}
+        for edge, prob in zip(edges, probs):
+            by_source.setdefault(edge.source, []).append((edge, float(prob)))
+        conditioned: dict[BeatState, tuple[tuple[Edge, ...], tuple[float, ...]]] = {}
+        for source, items in by_source.items():
+            outgoing_edges = tuple(edge for edge, _ in items)
+            outgoing_probs = _require_probs("outgoing_probs", tuple(prob for _, prob in items))
+            conditioned[source] = (outgoing_edges, outgoing_probs)
+        tables.append(conditioned)
+    return tuple(tables)
+
+
+def sample_bridge_path(
+    bridge: SolvedBridge,
+    rng: RNGKey,
+    *,
+    start_state: BeatState | None = None,
+    include_edges: bool = False,
+    include_debug: bool = False,
+) -> tuple[SampledBridgePath, RNGKey]:
+    """Sample a full path from a solved bridge using its conditioned transitions."""
+
+    if not isinstance(bridge, SolvedBridge):
+        raise TypeError("bridge must be a SolvedBridge.")
+    if not isinstance(rng, RNGKey):
+        raise TypeError("rng must be an RNGKey.")
+
+    graph = bridge.graph
+    transition_tables = _build_conditioned_transition_table(graph, bridge.edge_probabilities_by_time)
+
+    if start_state is None:
+        if bridge.initial_distribution is None:
+            start_state = graph.layers[0].states[0]
+        else:
+            idx, rng = _sample_categorical(rng, bridge.initial_distribution.probabilities)
+            start_state = bridge.initial_distribution.layer.states[idx]
+    else:
+        if start_state not in set(graph.layers[0].states):
+            raise ValueError("start_state must come from the bridge start layer.")
+
+    path: list[BeatState] = [start_state]
+    edges: list[Edge] = []
+    debug: list[Mapping[str, object]] = []
+
+    current = start_state
+    for t in range(len(graph.layers) - 1):
+        table = transition_tables[t]
+        if current not in table:
+            raise ValueError(f"No outgoing bridge transitions from state at time {t}.")
+        outgoing_edges, outgoing_probs = table[current]
+        chosen_idx, rng = _sample_categorical(rng, outgoing_probs)
+        edge = outgoing_edges[chosen_idx]
+        next_state = edge.target
+        path.append(next_state)
+        if include_edges:
+            edges.append(edge)
+        if include_debug:
+            debug.append(
+                {
+                    "time_index": t,
+                    "source": edge.source,
+                    "target": edge.target,
+                    "edge_probability": float(outgoing_probs[chosen_idx]) / float(sum(outgoing_probs)),
+                    "edge_log_weight": edge.log_weight,
+                }
+            )
+        current = next_state
+
+    return SampledBridgePath(path=tuple(path), edges=tuple(edges), debug=tuple(debug)), rng
+
+
+def uniform_bridge_from_graph(graph: SparseGraph) -> SolvedBridge:
+    """Utility for tests: make a bridge with uniform mass on each outgoing edge."""
+    probabilities: list[tuple[float, ...]] = []
+    for edges in graph.edges_by_time:
+        if not edges:
+            raise ValueError("graph.edges_by_time must not contain empty edge groups.")
+        probabilities.append(tuple(1.0 for _ in edges))
+    return SolvedBridge(graph=graph, edge_probabilities_by_time=tuple(probabilities))
