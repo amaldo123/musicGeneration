@@ -114,14 +114,20 @@ class SBSolution:
         backward = tuple(tuple(layer) for layer in self.log_backward_potentials)
         expected_sizes = self.problem.diagnostics.layer_sizes
         if len(forward) != len(expected_sizes) or len(backward) != len(expected_sizes):
-            raise ValueError("Potential layers must align with the SBProblem graph layers.")
+            raise ValueError(
+                "Potential layers must align with the SBProblem graph layers."
+            )
         for idx, (expected_size, f_layer, b_layer) in enumerate(
             zip(expected_sizes, forward, backward)
         ):
             if len(f_layer) != expected_size or len(b_layer) != expected_size:
                 raise ValueError(f"Potential size mismatch at layer {idx}.")
             for value in f_layer + b_layer:
-                if not isinstance(value, (int, float)) or not np.isfinite(value) and value != float("-inf"):
+                if (
+                    not isinstance(value, (int, float))
+                    or not np.isfinite(value)
+                    and value != float("-inf")
+                ):
                     raise ValueError("Potential values must be finite or -inf.")
 
         object.__setattr__(self, "log_forward_potentials", forward)
@@ -181,9 +187,7 @@ class _IndexedEdgeBucket:
         source_indices = tuple(self.source_indices)
         target_indices = tuple(self.target_indices)
         log_kernel_weights = tuple(float(weight) for weight in self.log_kernel_weights)
-        if not (
-            len(source_indices) == len(target_indices) == len(log_kernel_weights)
-        ):
+        if not (len(source_indices) == len(target_indices) == len(log_kernel_weights)):
             raise ValueError("Indexed edge bucket fields must have equal lengths.")
 
         for src_idx in source_indices:
@@ -223,7 +227,12 @@ class _NumpySBBackend:
     """Small sparse log-space backend used by the SB solver."""
 
     @staticmethod
-    def logsumexp(values: np.ndarray) -> float:
+    def logsumexp(
+        values: np.ndarray,
+        *,
+        underflow_floor: Optional[float] = None,
+        context: str = "logsumexp",
+    ) -> float:
         if values.ndim != 1:
             raise ValueError("logsumexp expects a 1D array.")
         if values.size == 0:
@@ -231,8 +240,17 @@ class _NumpySBBackend:
         finite_mask = np.isfinite(values)
         if not np.any(finite_mask):
             return float("-inf")
-        max_value = float(np.max(values[finite_mask]))
-        shifted = np.exp(values[finite_mask] - max_value)
+        finite_values = values[finite_mask]
+        max_value = float(np.max(finite_values))
+        shifts = finite_values - max_value
+        if underflow_floor is not None:
+            min_shift = float(np.min(shifts))
+            if min_shift < underflow_floor:
+                raise SBSolverError(
+                    f"{context} encountered shift below underflow floor: "
+                    f"min_shift={min_shift:.6g}, floor={underflow_floor:.6g}."
+                )
+        shifted = np.exp(shifts)
         return float(max_value + np.log(np.sum(shifted)))
 
     @classmethod
@@ -240,17 +258,24 @@ class _NumpySBBackend:
         cls,
         bucket: _IndexedEdgeBucket,
         next_values: np.ndarray,
+        *,
+        underflow_floor: Optional[float] = None,
     ) -> np.ndarray:
         result = np.full(bucket.source_size, float("-inf"), dtype=float)
-        edge_values = np.asarray(bucket.log_kernel_weights, dtype=float) + next_values[
-            np.asarray(bucket.target_indices, dtype=int)
-        ]
+        edge_values = (
+            np.asarray(bucket.log_kernel_weights, dtype=float)
+            + next_values[np.asarray(bucket.target_indices, dtype=int)]
+        )
         grouped: list[list[float]] = [[] for _ in range(bucket.source_size)]
         for src_idx, edge_value in zip(bucket.source_indices, edge_values):
             grouped[src_idx].append(float(edge_value))
         for idx, group in enumerate(grouped):
             if group:
-                result[idx] = cls.logsumexp(np.asarray(group, dtype=float))
+                result[idx] = cls.logsumexp(
+                    np.asarray(group, dtype=float),
+                    underflow_floor=underflow_floor,
+                    context=f"reduce_by_source[t={bucket.time_index},src={idx}]",
+                )
         return result
 
     @classmethod
@@ -258,17 +283,24 @@ class _NumpySBBackend:
         cls,
         bucket: _IndexedEdgeBucket,
         prev_values: np.ndarray,
+        *,
+        underflow_floor: Optional[float] = None,
     ) -> np.ndarray:
         result = np.full(bucket.target_size, float("-inf"), dtype=float)
-        edge_values = np.asarray(bucket.log_kernel_weights, dtype=float) + prev_values[
-            np.asarray(bucket.source_indices, dtype=int)
-        ]
+        edge_values = (
+            np.asarray(bucket.log_kernel_weights, dtype=float)
+            + prev_values[np.asarray(bucket.source_indices, dtype=int)]
+        )
         grouped: list[list[float]] = [[] for _ in range(bucket.target_size)]
         for dst_idx, edge_value in zip(bucket.target_indices, edge_values):
             grouped[dst_idx].append(float(edge_value))
         for idx, group in enumerate(grouped):
             if group:
-                result[idx] = cls.logsumexp(np.asarray(group, dtype=float))
+                result[idx] = cls.logsumexp(
+                    np.asarray(group, dtype=float),
+                    underflow_floor=underflow_floor,
+                    context=f"reduce_by_target[t={bucket.time_index},dst={idx}]",
+                )
         return result
 
 
@@ -380,7 +412,9 @@ def _validate_horizon_matches_graph(
 
 def _positive_mass_state_indices(endpoint: EndpointDistribution) -> Tuple[int, ...]:
     return tuple(
-        idx for idx, probability in enumerate(endpoint.probabilities) if probability > 0.0
+        idx
+        for idx, probability in enumerate(endpoint.probabilities)
+        if probability > 0.0
     )
 
 
@@ -446,7 +480,9 @@ def _validate_endpoint_reachability(
             )
 
 
-def _endpoint_probabilities_to_logs(endpoint: EndpointDistribution) -> Tuple[float, ...]:
+def _endpoint_probabilities_to_logs(
+    endpoint: EndpointDistribution,
+) -> Tuple[float, ...]:
     return tuple(
         float("-inf") if prob == 0.0 else float(np.log(prob))
         for prob in endpoint.probabilities
@@ -464,8 +500,7 @@ def _select_backend(sb_config: SBConfig) -> type[_NumpySBBackend]:
 def _index_problem(problem: SBProblem) -> _IndexedSBProblem:
     layers = problem.graph.layers
     state_to_index = [
-        {state: idx for idx, state in enumerate(layer.states)}
-        for layer in layers
+        {state: idx for idx, state in enumerate(layer.states)} for layer in layers
     ]
     indexed_buckets = []
     for bucket_idx, edge_group in enumerate(problem.graph.edges_by_time):
@@ -495,7 +530,9 @@ def _index_problem(problem: SBProblem) -> _IndexedSBProblem:
     )
 
 
-def _validate_log_array(name: str, values: np.ndarray, allow_negative_inf: bool = True) -> None:
+def _validate_log_array(
+    name: str, values: np.ndarray, allow_negative_inf: bool = True
+) -> None:
     if values.ndim != 1:
         raise SBSolverError(f"{name} must be a 1D array.")
     if np.any(np.isnan(values)) or np.any(np.isposinf(values)):
@@ -504,21 +541,34 @@ def _validate_log_array(name: str, values: np.ndarray, allow_negative_inf: bool 
         raise SBSolverError(f"{name} must be finite.")
 
 
+def _require_non_empty_log_support(name: str, values: np.ndarray) -> None:
+    if not np.any(np.isfinite(values)):
+        raise SBSolverError(f"{name} has empty finite support.")
+
+
 def _propagate_backward(
     indexed_problem: _IndexedSBProblem,
     backend: type[_NumpySBBackend],
     log_terminal_backward: np.ndarray,
+    *,
+    underflow_floor: float,
 ) -> list[np.ndarray]:
     layers = indexed_problem.problem.graph.layers
     backward = [np.full(len(layer), float("-inf"), dtype=float) for layer in layers]
     backward[-1] = log_terminal_backward.copy()
     _validate_log_array("log_terminal_backward", backward[-1])
+    _require_non_empty_log_support("log_terminal_backward", backward[-1])
     for bucket in reversed(indexed_problem.indexed_buckets):
         backward[bucket.time_index] = backend.reduce_by_source(
             bucket,
             backward[bucket.time_index + 1],
+            underflow_floor=underflow_floor,
         )
         _validate_log_array(
+            f"log_backward_potentials[{bucket.time_index}]",
+            backward[bucket.time_index],
+        )
+        _require_non_empty_log_support(
             f"log_backward_potentials[{bucket.time_index}]",
             backward[bucket.time_index],
         )
@@ -529,17 +579,25 @@ def _propagate_forward(
     indexed_problem: _IndexedSBProblem,
     backend: type[_NumpySBBackend],
     log_initial_forward: np.ndarray,
+    *,
+    underflow_floor: float,
 ) -> list[np.ndarray]:
     layers = indexed_problem.problem.graph.layers
     forward = [np.full(len(layer), float("-inf"), dtype=float) for layer in layers]
     forward[0] = log_initial_forward.copy()
     _validate_log_array("log_initial_forward", forward[0])
+    _require_non_empty_log_support("log_initial_forward", forward[0])
     for bucket in indexed_problem.indexed_buckets:
         forward[bucket.time_index + 1] = backend.reduce_by_target(
             bucket,
             forward[bucket.time_index],
+            underflow_floor=underflow_floor,
         )
         _validate_log_array(
+            f"log_forward_potentials[{bucket.time_index + 1}]",
+            forward[bucket.time_index + 1],
+        )
+        _require_non_empty_log_support(
             f"log_forward_potentials[{bucket.time_index + 1}]",
             forward[bucket.time_index + 1],
         )
@@ -552,20 +610,29 @@ def _require_finite_support(
     *,
     endpoint_name: str,
 ) -> None:
-    for idx, (message_value, endpoint_value) in enumerate(zip(message, endpoint_log_probs)):
+    for idx, (message_value, endpoint_value) in enumerate(
+        zip(message, endpoint_log_probs)
+    ):
         if np.isfinite(endpoint_value) and not np.isfinite(message_value):
             raise SBSolverError(
                 f"{endpoint_name} has positive mass on unreachable support at index {idx}."
             )
 
 
-def _safe_difference(log_probs: Tuple[float, ...], message: np.ndarray, *, name: str) -> np.ndarray:
+def _safe_difference(
+    log_probs: Tuple[float, ...],
+    message: np.ndarray,
+    *,
+    name: str,
+    underflow_floor: float,
+) -> np.ndarray:
     _require_finite_support(message, log_probs, endpoint_name=name)
     result = np.full(len(log_probs), float("-inf"), dtype=float)
     for idx, (log_prob, message_value) in enumerate(zip(log_probs, message)):
         if np.isfinite(log_prob):
             result[idx] = float(log_prob - message_value)
     _validate_log_array(name, result)
+    _require_non_empty_log_support(name, result)
     return result
 
 
@@ -636,10 +703,7 @@ def build_sb_problem(
             if out_degree[state] == 0
         ),
         zero_indegree_count=sum(
-            1
-            for layer in layers[1:]
-            for state in layer.states
-            if in_degree[state] == 0
+            1 for layer in layers[1:] for state in layer.states if in_degree[state] == 0
         ),
         pi0_support_size=len(pi0.layer),
         piT_support_size=len(piT.layer),
@@ -668,17 +732,29 @@ def solve_sb(problem: SBProblem) -> SBSolution:
     iterations = 0
 
     for iteration in range(1, problem.sb_config.max_iterations + 1):
-        backward = _propagate_backward(indexed_problem, backend, log_terminal_backward)
+        backward = _propagate_backward(
+            indexed_problem,
+            backend,
+            log_terminal_backward,
+            underflow_floor=problem.sb_config.log_underflow_floor,
+        )
         log_initial_forward = _safe_difference(
             indexed_problem.log_pi0,
             backward[0],
             name="log_initial_forward",
+            underflow_floor=problem.sb_config.log_underflow_floor,
         )
-        forward = _propagate_forward(indexed_problem, backend, log_initial_forward)
+        forward = _propagate_forward(
+            indexed_problem,
+            backend,
+            log_initial_forward,
+            underflow_floor=problem.sb_config.log_underflow_floor,
+        )
         next_log_terminal_backward = _safe_difference(
             indexed_problem.log_piT,
             forward[-1],
             name="log_terminal_backward",
+            underflow_floor=problem.sb_config.log_underflow_floor,
         )
 
         final_max_delta = _max_abs_delta(
@@ -691,13 +767,30 @@ def solve_sb(problem: SBProblem) -> SBSolution:
             converged = True
             break
 
-    backward = _propagate_backward(indexed_problem, backend, log_terminal_backward)
+    if not converged and problem.sb_config.raise_on_non_convergence:
+        raise SBSolverError(
+            "SB solver did not converge within max_iterations "
+            f"({problem.sb_config.max_iterations})."
+        )
+
+    backward = _propagate_backward(
+        indexed_problem,
+        backend,
+        log_terminal_backward,
+        underflow_floor=problem.sb_config.log_underflow_floor,
+    )
     log_initial_forward = _safe_difference(
         indexed_problem.log_pi0,
         backward[0],
         name="log_initial_forward",
+        underflow_floor=problem.sb_config.log_underflow_floor,
     )
-    forward = _propagate_forward(indexed_problem, backend, log_initial_forward)
+    forward = _propagate_forward(
+        indexed_problem,
+        backend,
+        log_initial_forward,
+        underflow_floor=problem.sb_config.log_underflow_floor,
+    )
 
     trace = SBConvergenceTrace(
         iterations=iterations,
