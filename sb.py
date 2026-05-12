@@ -74,14 +74,20 @@ class SBSolution:
         backward = tuple(tuple(layer) for layer in self.log_backward_potentials)
         expected_sizes = self.problem.diagnostics.layer_sizes
         if len(forward) != len(expected_sizes) or len(backward) != len(expected_sizes):
-            raise ValueError("Potential layers must align with the SBProblem graph layers.")
+            raise ValueError(
+                "Potential layers must align with the SBProblem graph layers."
+            )
         for idx, (expected_size, f_layer, b_layer) in enumerate(
             zip(expected_sizes, forward, backward)
         ):
             if len(f_layer) != expected_size or len(b_layer) != expected_size:
                 raise ValueError(f"Potential size mismatch at layer {idx}.")
             for value in f_layer + b_layer:
-                if not isinstance(value, (int, float)) or not np.isfinite(value) and value != float("-inf"):
+                if (
+                    not isinstance(value, (int, float))
+                    or not np.isfinite(value)
+                    and value != float("-inf")
+                ):
                     raise ValueError("Potential values must be finite or -inf.")
 
         object.__setattr__(self, "log_forward_potentials", forward)
@@ -112,9 +118,7 @@ class _IndexedEdgeBucket:
         source_indices = tuple(self.source_indices)
         target_indices = tuple(self.target_indices)
         log_kernel_weights = tuple(float(weight) for weight in self.log_kernel_weights)
-        if not (
-            len(source_indices) == len(target_indices) == len(log_kernel_weights)
-        ):
+        if not (len(source_indices) == len(target_indices) == len(log_kernel_weights)):
             raise ValueError("Indexed edge bucket fields must have equal lengths.")
 
         for src_idx in source_indices:
@@ -189,9 +193,10 @@ class _NumpySBBackend:
         underflow_floor: Optional[float] = None,
     ) -> np.ndarray:
         result = np.full(bucket.source_size, float("-inf"), dtype=float)
-        edge_values = np.asarray(bucket.log_kernel_weights, dtype=float) + next_values[
-            np.asarray(bucket.target_indices, dtype=int)
-        ]
+        edge_values = (
+            np.asarray(bucket.log_kernel_weights, dtype=float)
+            + next_values[np.asarray(bucket.target_indices, dtype=int)]
+        )
         grouped: list[list[float]] = [[] for _ in range(bucket.source_size)]
         for src_idx, edge_value in zip(bucket.source_indices, edge_values):
             grouped[src_idx].append(float(edge_value))
@@ -213,9 +218,10 @@ class _NumpySBBackend:
         underflow_floor: Optional[float] = None,
     ) -> np.ndarray:
         result = np.full(bucket.target_size, float("-inf"), dtype=float)
-        edge_values = np.asarray(bucket.log_kernel_weights, dtype=float) + prev_values[
-            np.asarray(bucket.source_indices, dtype=int)
-        ]
+        edge_values = (
+            np.asarray(bucket.log_kernel_weights, dtype=float)
+            + prev_values[np.asarray(bucket.source_indices, dtype=int)]
+        )
         grouped: list[list[float]] = [[] for _ in range(bucket.target_size)]
         for dst_idx, edge_value in zip(bucket.target_indices, edge_values):
             grouped[dst_idx].append(float(edge_value))
@@ -337,7 +343,9 @@ def _validate_horizon_matches_graph(
 
 def _positive_mass_state_indices(endpoint: EndpointDistribution) -> Tuple[int, ...]:
     return tuple(
-        idx for idx, probability in enumerate(endpoint.probabilities) if probability > 0.0
+        idx
+        for idx, probability in enumerate(endpoint.probabilities)
+        if probability > 0.0
     )
 
 
@@ -403,7 +411,9 @@ def _validate_endpoint_reachability(
             )
 
 
-def _endpoint_probabilities_to_logs(endpoint: EndpointDistribution) -> Tuple[float, ...]:
+def _endpoint_probabilities_to_logs(
+    endpoint: EndpointDistribution,
+) -> Tuple[float, ...]:
     return tuple(
         float("-inf") if prob == 0.0 else float(np.log(prob))
         for prob in endpoint.probabilities
@@ -421,8 +431,7 @@ def _select_backend(sb_config: SBConfig) -> type[_NumpySBBackend]:
 def _index_problem(problem: SBProblem) -> _IndexedSBProblem:
     layers = problem.graph.layers
     state_to_index = [
-        {state: idx for idx, state in enumerate(layer.states)}
-        for layer in layers
+        {state: idx for idx, state in enumerate(layer.states)} for layer in layers
     ]
     indexed_buckets = []
     for bucket_idx, edge_group in enumerate(problem.graph.edges_by_time):
@@ -452,7 +461,9 @@ def _index_problem(problem: SBProblem) -> _IndexedSBProblem:
     )
 
 
-def _validate_log_array(name: str, values: np.ndarray, allow_negative_inf: bool = True) -> None:
+def _validate_log_array(
+    name: str, values: np.ndarray, allow_negative_inf: bool = True
+) -> None:
     if values.ndim != 1:
         raise SBSolverError(f"{name} must be a 1D array.")
     if np.any(np.isnan(values)) or np.any(np.isposinf(values)):
@@ -530,7 +541,9 @@ def _require_finite_support(
     *,
     endpoint_name: str,
 ) -> None:
-    for idx, (message_value, endpoint_value) in enumerate(zip(message, endpoint_log_probs)):
+    for idx, (message_value, endpoint_value) in enumerate(
+        zip(message, endpoint_log_probs)
+    ):
         if np.isfinite(endpoint_value) and not np.isfinite(message_value):
             raise SBSolverError(
                 f"{endpoint_name} has positive mass on unreachable support at index {idx}."
@@ -621,10 +634,7 @@ def build_sb_problem(
             if out_degree[state] == 0
         ),
         zero_indegree_count=sum(
-            1
-            for layer in layers[1:]
-            for state in layer.states
-            if in_degree[state] == 0
+            1 for layer in layers[1:] for state in layer.states if in_degree[state] == 0
         ),
         pi0_support_size=len(pi0.layer),
         piT_support_size=len(piT.layer),
