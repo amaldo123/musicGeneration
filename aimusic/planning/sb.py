@@ -456,8 +456,8 @@ def _compute_endpoint_reachability(
     pi0: EndpointDistribution,
     piT: EndpointDistribution,
 ) -> tuple[Tuple[set[BeatState], ...], Tuple[set[BeatState], ...]]:
-    forward_reachable = [set() for _ in layers]
-    backward_reachable = [set() for _ in layers]
+    forward_reachable: list[set[BeatState]] = [set() for _ in layers]
+    backward_reachable: list[set[BeatState]] = [set() for _ in layers]
 
     for idx in _positive_mass_state_indices(pi0):
         forward_reachable[0].add(layers[0].states[idx])
