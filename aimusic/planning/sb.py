@@ -760,14 +760,14 @@ def _compute_bridge_marginals_and_conditionals(
                 + (edge.log_weight / temperature)
                 + backward[time_index + 1][target_idx]
             )
-            log_conditional = (
-                (edge.log_weight / temperature)
-                + backward[time_index + 1][target_idx]
-                - source_log_norm[source_idx]
-            )
             if not np.isfinite(source_log_mass[source_idx]):
                 conditioned_probs.append(0.0)
             else:
+                log_conditional = (
+                    (edge.log_weight / temperature)
+                    + backward[time_index + 1][target_idx]
+                    - source_log_norm[source_idx]
+                )
                 conditioned_probs.append(float(np.exp(log_conditional)))
             edge_marginals.append(float(np.exp(log_edge_marginal)))
         conditioned_tuple = tuple(conditioned_probs)
@@ -1083,7 +1083,10 @@ def _build_conditioned_transition_table(
         conditioned: dict[BeatState, tuple[tuple[Edge, ...], tuple[float, ...]]] = {}
         for source, items in by_source.items():
             outgoing_edges = tuple(edge for edge, _ in items)
-            outgoing_probs = _require_probs("outgoing_probs", tuple(prob for _, prob in items))
+            raw_probs = tuple(prob for _, prob in items)
+            if float(sum(raw_probs)) <= 0.0:
+                continue
+            outgoing_probs = _require_probs("outgoing_probs", raw_probs)
             conditioned[source] = (outgoing_edges, outgoing_probs)
         tables.append(conditioned)
     return tuple(tables)
