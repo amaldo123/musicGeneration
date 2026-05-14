@@ -14,8 +14,10 @@ from sb import (
     _NumpySBBackend,
     _require_non_empty_log_support,
     build_sb_problem,
+    map_bridge_path,
     solve_sb,
     sample_bridge_path,
+    solved_bridge_from_solution,
     uniform_bridge_from_graph,
 )
 
@@ -124,6 +126,88 @@ def _branching_graph() -> tuple[SparseGraph, EndpointDistribution, EndpointDistr
     )
     pi0 = EndpointDistribution(layer=l0, probabilities=(1.0,))
     piT = EndpointDistribution(layer=l2, probabilities=(0.4, 0.6))
+    return graph, pi0, piT
+
+
+def _near_degenerate_graph() -> tuple[SparseGraph, EndpointDistribution, EndpointDistribution]:
+    start = _state(0, groove=0)
+    middle_a = _state(1, groove=1)
+    middle_b = _state(1, groove=2)
+    end = _state(2, groove=3)
+
+    l0 = Layer(time_index=0, states=(start,))
+    l1 = Layer(time_index=1, states=(middle_a, middle_b))
+    l2 = Layer(time_index=2, states=(end,))
+
+    edges_t0 = (
+        Edge(time_index=0, source=start, target=middle_a, log_weight=math.log(1.0 - 1e-12)),
+        Edge(time_index=0, source=start, target=middle_b, log_weight=math.log(1e-12)),
+    )
+    edges_t1 = (
+        Edge(time_index=1, source=middle_a, target=end, log_weight=0.0),
+        Edge(time_index=1, source=middle_b, target=end, log_weight=0.0),
+    )
+    graph = SparseGraph(
+        layers=(l0, l1, l2),
+        edges_by_time=(edges_t0, edges_t1),
+        diagnostics=GraphDiagnostics(
+            layer_sizes=(1, 2, 1),
+            layer_diagnostics=(
+                LayerBuildDiagnostics(
+                    time_index=0,
+                    source_state_count=1,
+                    raw_candidate_count=2,
+                    unique_candidate_count=2,
+                    kept_candidate_count=2,
+                    raw_edge_count=2,
+                    kept_edge_count=2,
+                ),
+                LayerBuildDiagnostics(
+                    time_index=1,
+                    source_state_count=2,
+                    raw_candidate_count=2,
+                    unique_candidate_count=2,
+                    kept_candidate_count=2,
+                    raw_edge_count=2,
+                    kept_edge_count=2,
+                ),
+            ),
+        ),
+    )
+    pi0 = EndpointDistribution(layer=l0, probabilities=(1.0,))
+    piT = EndpointDistribution(layer=l2, probabilities=(1.0,))
+    return graph, pi0, piT
+
+
+def _zero_mass_dangling_support_graph() -> tuple[SparseGraph, EndpointDistribution, EndpointDistribution]:
+    active_start = _state(0, groove=0)
+    inactive_start = _state(0, groove=9)
+    end = _state(1, groove=1)
+
+    l0 = Layer(time_index=0, states=(active_start, inactive_start))
+    l1 = Layer(time_index=1, states=(end,))
+    graph = SparseGraph(
+        layers=(l0, l1),
+        edges_by_time=(
+            (Edge(time_index=0, source=active_start, target=end, log_weight=0.0),),
+        ),
+        diagnostics=GraphDiagnostics(
+            layer_sizes=(2, 1),
+            layer_diagnostics=(
+                LayerBuildDiagnostics(
+                    time_index=0,
+                    source_state_count=2,
+                    raw_candidate_count=1,
+                    unique_candidate_count=1,
+                    kept_candidate_count=1,
+                    raw_edge_count=1,
+                    kept_edge_count=1,
+                ),
+            ),
+        ),
+    )
+    pi0 = EndpointDistribution(layer=l0, probabilities=(1.0, 0.0))
+    piT = EndpointDistribution(layer=l1, probabilities=(1.0,))
     return graph, pi0, piT
 
 
@@ -427,6 +511,7 @@ class TestSBSolver(unittest.TestCase):
         second = solve_sb(problem)
 
         self.assertEqual(first, second)
+        self.assertEqual(first.trace.residual_history, second.trace.residual_history)
 
     def test_solve_sb_reports_non_convergence_without_raising(self):
         graph, pi0, piT = _branching_graph()
@@ -482,6 +567,50 @@ class TestSBSolver(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             solve_sb(problem)
 
+    def test_solution_exposes_marginals_and_convergence_history(self):
+        graph, pi0, piT = _branching_graph()
+        problem = build_sb_problem(graph, pi0, piT)
+
+        solution = solve_sb(problem)
+
+        self.assertIsNotNone(solution.marginals)
+        self.assertEqual(len(solution.marginals.node_marginals_by_layer), len(graph.layers))
+        self.assertEqual(len(solution.marginals.edge_marginals_by_time), len(graph.edges_by_time))
+        for layer_probs in solution.marginals.node_marginals_by_layer:
+            self.assertAlmostEqual(sum(layer_probs), 1.0)
+        self.assertEqual(solution.trace.iterations, len(solution.trace.residual_history))
+
+    def test_solved_bridge_normalizes_per_source_state(self):
+        graph, pi0, piT = _branching_graph()
+        solution = solve_sb(build_sb_problem(graph, pi0, piT))
+
+        bridge = solved_bridge_from_solution(solution)
+
+        grouped = {}
+        for edge, prob in zip(graph.edges_by_time[1], bridge.edge_probabilities_by_time[1]):
+            grouped.setdefault(edge.source, 0.0)
+            grouped[edge.source] += prob
+        for total in grouped.values():
+            self.assertAlmostEqual(total, 1.0)
+
+    def test_solve_sb_converges_on_near_degenerate_graph(self):
+        graph, pi0, piT = _near_degenerate_graph()
+
+        solution = solve_sb(build_sb_problem(graph, pi0, piT))
+
+        self.assertTrue(solution.trace.converged)
+        self.assertTrue(all(math.isfinite(value) for value in solution.trace.residual_history))
+
+    def test_solve_sb_allows_zero_mass_dangling_support(self):
+        graph, pi0, piT = _zero_mass_dangling_support_graph()
+
+        solution = solve_sb(build_sb_problem(graph, pi0, piT))
+        bridge = solution.to_bridge()
+
+        self.assertTrue(solution.trace.converged)
+        self.assertEqual(solution.marginals.node_marginals_by_layer[0], (1.0, 0.0))
+        self.assertEqual(bridge.edge_probabilities_by_time[0], (1.0,))
+
 
 class TestSchrodingerBridgeSampler(unittest.TestCase):
     def setUp(self):
@@ -533,6 +662,36 @@ class TestSchrodingerBridgeSampler(unittest.TestCase):
             self.assertEqual(edge.source, sampled.path[t])
             self.assertEqual(edge.target, sampled.path[t + 1])
             self.assertIn(edge, self.graph.edges_by_time[t])
+
+
+class TestBridgeTrajectoryExtraction(unittest.TestCase):
+    def test_map_bridge_path_returns_expected_best_path(self):
+        graph, pi0, piT = _branching_graph()
+        solution = solve_sb(build_sb_problem(graph, pi0, piT))
+        bridge = solution.to_bridge()
+
+        path, score = map_bridge_path(bridge)
+
+        expected_path = (
+            graph.layers[0].states[0],
+            graph.layers[1].states[1],
+            graph.layers[2].states[1],
+        )
+        self.assertEqual(path, expected_path)
+        self.assertTrue(math.isfinite(score))
+
+    def test_sampling_is_reproducible_from_solved_bridge(self):
+        graph, pi0, piT = _branching_graph()
+        bridge = solve_sb(build_sb_problem(graph, pi0, piT)).to_bridge()
+        key = RNGKey(seed=77)
+
+        sample_a, _ = sample_bridge_path(bridge, key, include_edges=True, include_debug=True)
+        sample_b, _ = sample_bridge_path(bridge, key, include_edges=True, include_debug=True)
+
+        self.assertEqual(sample_a, sample_b)
+        for step in sample_a.debug:
+            self.assertGreaterEqual(step["edge_probability"], 0.0)
+            self.assertLessEqual(step["edge_probability"], 1.0)
 
 
 if __name__ == "__main__":
