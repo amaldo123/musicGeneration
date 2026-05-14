@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Mapping, Optional, Sequence
 
-from core_types import BeatState
-from gttm_features import (  # noqa: F401
+from aimusic.core.core_types import BeatState
+from aimusic.scoring.gttm_features import (  # noqa: F401
     DEFAULT_METERS,
     MeterSpec,
     W_BOUNDARY_ON_STRONG,  # noqa: F401
@@ -21,7 +21,7 @@ from gttm_features import (  # noqa: F401
     meter_stability_feature,
     strong_beat_alignment,
 )
-from vocab import DEFAULT_VOCABULARIES
+from aimusic.core.vocab import DEFAULT_VOCABULARIES
 
 
 def _legacy_groove_continuity(a: BeatState, b: BeatState) -> float:

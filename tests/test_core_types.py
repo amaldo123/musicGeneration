@@ -1,8 +1,8 @@
 import unittest
 from dataclasses import FrozenInstanceError
 
-from core_types import BeatState, Edge, EndpointDistribution, Layer, NoteEvent, Score
-from vocab import DEFAULT_VOCABULARIES
+from aimusic.core.core_types import BeatState, Edge, EndpointDistribution, Layer, NoteEvent, Score
+from aimusic.core.vocab import DEFAULT_VOCABULARIES
 
 
 class TestBeatState(unittest.TestCase):

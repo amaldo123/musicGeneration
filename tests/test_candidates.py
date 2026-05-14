@@ -1,17 +1,17 @@
 import unittest
 import numpy as np
 
-from candidates import (
+from aimusic.planning.candidates import (
     apply_meter_constraints,
     apply_position_constraints,
     apply_role_constraints,
     get_valid_next_states,
     is_legal_transition,
 )
-from config import StyleConfig
-from core_types import BeatState
-from priors import NeuralPrior
-from vocab import DEFAULT_VOCABULARIES
+from aimusic.core.config import StyleConfig
+from aimusic.core.core_types import BeatState
+from aimusic.scoring.priors import NeuralPrior
+from aimusic.core.vocab import DEFAULT_VOCABULARIES
 
 
 VOCABS = DEFAULT_VOCABULARIES

@@ -6,10 +6,10 @@ from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from config import SBBackend, SBConfig
-from core_types import BeatState, Edge, EndpointDistribution, Layer
-from graph import SparseGraph
-from rng import RNGKey, random_unit
+from aimusic.core.config import SBBackend, SBConfig
+from aimusic.core.core_types import BeatState, Edge, EndpointDistribution, Layer
+from aimusic.planning.graph import SparseGraph
+from aimusic.core.rng import RNGKey, random_unit
 
 
 @dataclass(frozen=True)

@@ -15,7 +15,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Dict, FrozenSet, Tuple
 
-from edo import EDO
+from aimusic.theory.edo import EDO
 
 
 # ===================================================================

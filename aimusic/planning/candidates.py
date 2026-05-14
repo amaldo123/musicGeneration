@@ -4,12 +4,12 @@ from dataclasses import dataclass
 from typing import Mapping, Optional, Sequence, Tuple, Iterator
 import numpy as np
 
-from config import StyleConfig
-from core_types import BeatState
-from gttm_features import beats_per_bar, is_strong_beat
-from priors import NullPrior, Prior, PriorContext, PriorQuery, prior_logps
-from tonal import get_fifth_steps, nearest_roots
-from vocab import ChordToken, DEFAULT_VOCABULARIES, GrooveToken, Vocabularies
+from aimusic.core.config import StyleConfig
+from aimusic.core.core_types import BeatState
+from aimusic.scoring.gttm_features import beats_per_bar, is_strong_beat
+from aimusic.scoring.priors import NullPrior, Prior, PriorContext, PriorQuery, prior_logps
+from aimusic.theory.tonal import get_fifth_steps, nearest_roots
+from aimusic.core.vocab import ChordToken, DEFAULT_VOCABULARIES, GrooveToken, Vocabularies
 
 
 LEGAL_ROLE_SUCCESSORS: Mapping[str, frozenset[str]] = {

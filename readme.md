@@ -50,26 +50,27 @@ The system is organized as a layered pipeline. A typical run executes:
 -   **Beat-level Structural State (`St`):** A compact, token-based representation of the musical state at a beat: `(meter_id, beat_in_bar, boundary_lvl, key_id, chord_id, role_id, head_id, groove_id)`.
 -   **Score-level Representation (`NoteEvent`):** A tuple representing a single note: `(ton, toff, h, v, e, track)`.
 
-## 13. Repository Organization (Recommended)
+## 13. Repository Organization
 
-The implementation follows a clean module structure as suggested below:
+The implementation now lives under the `aimusic/` package and is grouped by responsibility:
 
-| Module             | Responsibility                                               |
-| ------------------ | ------------------------------------------------------------ |
-| `config.py`        | Immutable configuration dataclasses.                         |
-| `edo.py`           | EDO pitch math, pitch-class utilities.                       |
-| `vocab.py`         | Token vocabularies for meters, grooves, chords, keys, etc.   |
-| `tonal.py`         | Tonal system definition, chord templates, tonal distances.   |
-| `priors.py`        | `NullPrior`, placeholder `NeuralPrior`, manifests, and prior scoring helpers. |
-| `gttm_features.py` | Feature functions and weighted energy computation.           |
-| `candidates.py`    | Hard gating and candidate proposal functions.                |
-| `graph.py`         | Layer expansion, sparse edge building, pruning.              |
-| `sb.py`            | Schrödinger bridge solver, sampling, MAP path extraction.    |
-| `plans.py`         | Method A/B endpoint generation and section plans.            |
-| `decode.py`        | `BeatState` path to Score; track generators.                 |
-| `midi_render.py`   | Score to MIDI (microtonal rendering options).                |
-| `cli.py`           | Command-line entry points (generate, inspect, export).       |
-| `notebooks/`       | Optional exploration notebooks (kept minimal).               |
+| Package / Module                     | Responsibility                                               |
+| ------------------------------------ | ------------------------------------------------------------ |
+| `aimusic.core.config`                | Immutable configuration dataclasses.                         |
+| `aimusic.core.core_types`            | Canonical shared types such as `BeatState`, `Layer`, `Edge`, and `Score`. |
+| `aimusic.core.vocab`                 | Token vocabularies for meters, grooves, chords, keys, and roles. |
+| `aimusic.core.rng`                   | Deterministic RNG helpers for pure sampling code.            |
+| `aimusic.theory.edo`                 | EDO pitch math and rendering helpers.                        |
+| `aimusic.theory.tonal`               | Tonal system definition, chord templates, tonal distances.   |
+| `aimusic.scoring.gttm_features`      | Feature functions and weighted energy computation.           |
+| `aimusic.scoring.priors`             | `NullPrior`, placeholder `NeuralPrior`, manifests, and prior scoring helpers. |
+| `aimusic.scoring.rhythm_features`    | Compatibility facade over the GTTM beat-state scoring layer. |
+| `aimusic.planning.candidates`        | Hard gating and candidate proposal functions.                |
+| `aimusic.planning.graph`             | Layer expansion, sparse edge building, pruning.              |
+| `aimusic.planning.sb`                | Schrödinger bridge solver, bridge extraction, sampling, and MAP path extraction. |
+| `aimusic.app.main`                   | Application / demo entrypoints.                              |
+
+The test suite lives under `tests/` and imports the packaged modules directly.
 
 ## 17. Implementation Checklist (Practical)
 

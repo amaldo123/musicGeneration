@@ -3,11 +3,11 @@ import unittest
 
 import numpy as np
 
-from config import SBBackend, SBConfig
-from core_types import BeatState, Edge, EndpointDistribution, Layer
-from graph import GraphDiagnostics, LayerBuildDiagnostics, SparseGraph
-from rng import RNGKey
-from sb import (
+from aimusic.core.config import SBBackend, SBConfig
+from aimusic.core.core_types import BeatState, Edge, EndpointDistribution, Layer
+from aimusic.planning.graph import GraphDiagnostics, LayerBuildDiagnostics, SparseGraph
+from aimusic.core.rng import RNGKey
+from aimusic.planning.sb import (
     SBContractError,
     SBSolverError,
     _IndexedEdgeBucket,

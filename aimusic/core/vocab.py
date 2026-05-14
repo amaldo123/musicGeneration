@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Generic, Iterator, Mapping, Protocol, Sequence, Tuple, TypeVar
 
-from config import StyleConfig
+from aimusic.core.config import StyleConfig
 
 
 PITCH_CLASS_NAMES_12: Tuple[str, ...] = (

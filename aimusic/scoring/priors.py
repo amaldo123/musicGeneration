@@ -6,14 +6,14 @@ from math import isfinite
 from pathlib import Path
 from typing import Optional, Protocol, Sequence, Tuple, runtime_checkable
 
-from config import (
+from aimusic.core.config import (
     NeuralPriorConfig,
     PlaceholderPriorMode,
     PriorFactorization,
     PriorWeights,
 )
-from core_types import BeatState
-from gttm_features import TransitionWindow, calculate_gttm_energy
+from aimusic.core.core_types import BeatState
+from aimusic.scoring.gttm_features import TransitionWindow, calculate_gttm_energy
 
 
 STRUCTURAL_STREAM_NAMES: Tuple[str, ...] = (

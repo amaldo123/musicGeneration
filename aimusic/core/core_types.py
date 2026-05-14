@@ -6,7 +6,7 @@ from math import isclose, isfinite
 from typing import TYPE_CHECKING, Any, Iterator, Tuple
 
 if TYPE_CHECKING:
-    from vocab import TokenVocabulary, Vocabularies
+    from aimusic.core.vocab import TokenVocabulary, Vocabularies
 
 
 ExpressiveControls = Tuple[float, ...]

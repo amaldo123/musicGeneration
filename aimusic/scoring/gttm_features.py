@@ -5,16 +5,16 @@ from enum import Enum
 from functools import lru_cache
 from typing import Callable, Dict, List, Mapping, Optional
 
-from config import PriorWeights
-from core_types import BeatState
-from tonal import (
+from aimusic.core.config import PriorWeights
+from aimusic.core.core_types import BeatState
+from aimusic.theory.tonal import (
     basic_space_distance,
     is_dominant,
     is_tonic_family,
     nearest_roots,
     tonal_distance,
 )
-from vocab import (
+from aimusic.core.vocab import (
     DEFAULT_VOCABULARIES,
     ChordToken,
     GrooveToken,

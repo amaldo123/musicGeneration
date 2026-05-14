@@ -5,9 +5,9 @@ Covers both 12-EDO and 19-EDO to verify EDO-generic arithmetic.
 
 import unittest
 
-from config import EDOConfig
-from edo import EDO
-from tonal import (
+from aimusic.core.config import EDOConfig
+from aimusic.theory.edo import EDO
+from aimusic.theory.tonal import (
     ALL_QUALITIES,
     TonalSystem,
     basic_space_distance,
