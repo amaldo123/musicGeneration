@@ -67,6 +67,7 @@ The implementation now lives under the `aimusic/` package and is grouped by resp
 | `aimusic.scoring.rhythm_features`    | Compatibility facade over the GTTM beat-state scoring layer. |
 | `aimusic.planning.candidates`        | Hard gating and candidate proposal functions.                |
 | `aimusic.planning.graph`             | Layer expansion, sparse edge building, pruning.              |
+| `aimusic.planning.plans`             | Endpoint generation, section metadata, and Method A orchestration. |
 | `aimusic.planning.sb`                | Schrödinger bridge solver, bridge extraction, sampling, and MAP path extraction. |
 | `aimusic.app.main`                   | Application / demo entrypoints.                              |
 

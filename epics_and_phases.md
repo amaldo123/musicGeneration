@@ -191,19 +191,19 @@ The major missing pieces are:
 
 **Tasks**
 
-- [ ] Implement endpoint distribution generators for `pi0` and `piT`.
-- [ ] Define how start and end passages are sampled or selected from style constraints.
-- [ ] Encode section metadata needed by future section-wise planning even if the first MVP is single-section.
-- [ ] Implement Method A as a top-level pure orchestration flow.
-- [ ] Add run configuration objects that bundle style, priors, decoding, and planning choices.
-- [ ] Surface planning diagnostics such as chosen endpoint states, section tags, and target tension arcs.
-- [ ] Add smoke tests for an end-to-end Method A run over a short horizon.
+- [x] Implement endpoint distribution generators for `pi0` and `piT`.
+- [x] Define how start and end passages are sampled or selected from style constraints.
+- [x] Encode section metadata needed by future section-wise planning even if the first MVP is single-section.
+- [x] Implement Method A as a top-level pure orchestration flow.
+- [x] Add run configuration objects that bundle style, priors, decoding, and planning choices.
+- [x] Surface planning diagnostics such as chosen endpoint states, section tags, and target tension arcs.
+- [x] Add smoke tests for an end-to-end Method A run over a short horizon.
 
 **Definition of done**
 
-- [ ] A single function can run config -> endpoints -> graph -> SB -> path for Method A.
-- [ ] Endpoint choices are inspectable and reproducible from a seed.
-- [ ] Method A is the stable MVP path before Method B work begins.
+- [x] A single function can run config -> endpoints -> graph -> SB -> path for Method A.
+- [x] Endpoint choices are inspectable and reproducible from a seed.
+- [x] Method A is the stable MVP path before Method B work begins.
 
 ### EPIC 7: Decoder from BeatState Path to Symbolic Score
 
