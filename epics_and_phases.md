@@ -168,20 +168,20 @@ The major missing pieces are:
 
 - [x] Define the sparse graph input contract for layers, edges, and endpoint distributions.
 - [x] Implement log-space forward and backward scaling updates for SB.
-- [ ] Implement sparse scatter log-sum-exp helpers behind a small backend abstraction.
+- [x] Implement sparse scatter log-sum-exp helpers behind a small backend abstraction.
 - [x] Add numerical safeguards for underflow, empty support, and non-convergence cases.
-- [ ] Compute bridge-modified transition probabilities from the solver outputs.
-- [ ] Implement pure path sampling from the bridge transitions.
-- [ ] Implement pure MAP extraction using Viterbi-style dynamic programming.
-- [ ] Return optional bridge marginals and convergence traces.
-- [ ] Add deterministic reproducibility tests for solver inputs and RNG-controlled sampling.
-- [ ] Add solver convergence tests on tiny hand-built graphs.
+- [x] Compute bridge-modified transition probabilities from the solver outputs.
+- [x] Implement pure path sampling from the bridge transitions.
+- [x] Implement pure MAP extraction using Viterbi-style dynamic programming.
+- [x] Return optional bridge marginals and convergence traces.
+- [x] Add deterministic reproducibility tests for solver inputs and RNG-controlled sampling.
+- [x] Add solver convergence tests on tiny hand-built graphs.
 
 **Definition of done**
 
-- [ ] SB converges on controlled sparse examples.
-- [ ] Sampling and MAP can be called independently on the solved bridge.
-- [ ] The solver API is pure and compatible with later backend swaps.
+- [x] SB converges on controlled sparse examples.
+- [x] Sampling and MAP can be called independently on the solved bridge.
+- [x] The solver API is pure and compatible with later backend swaps.
 
 ### EPIC 6: Endpoint Planning and Method A Orchestration
 
