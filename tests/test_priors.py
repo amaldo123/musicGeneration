@@ -1,15 +1,15 @@
 import tempfile
 import unittest
 
-from config import (
+from aimusic.core.config import (
     NeuralPriorConfig,
     PlaceholderPriorMode,
     PriorFactorization,
     PriorWeights,
 )
-from core_types import BeatState
-from gttm_features import TransitionWindow, calculate_gttm_energy
-from priors import (
+from aimusic.core.core_types import BeatState
+from aimusic.scoring.gttm_features import TransitionWindow, calculate_gttm_energy
+from aimusic.scoring.priors import (
     NeuralPrior,
     NeuralPriorManifest,
     NullPrior,
@@ -25,7 +25,7 @@ from priors import (
     prior_logps,
     save_neural_prior_manifest,
 )
-from vocab import DEFAULT_VOCABULARIES
+from aimusic.core.vocab import DEFAULT_VOCABULARIES
 
 
 VOCABS = DEFAULT_VOCABULARIES

@@ -1,6 +1,6 @@
-from config import EDOConfig, MicrotonalRendering
-from edo import EDO
-from tonal import TonalSystem
+from aimusic.core.config import EDOConfig, MicrotonalRendering
+from aimusic.theory.edo import EDO
+from aimusic.theory.tonal import TonalSystem
 
 
 def main():

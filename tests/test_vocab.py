@@ -1,7 +1,7 @@
 import unittest
 
-from config import StyleConfig
-from vocab import (
+from aimusic.core.config import StyleConfig
+from aimusic.core.vocab import (
     CORE_CHORD_QUALITIES,
     DEFAULT_VOCABULARIES,
     KeyToken,

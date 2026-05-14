@@ -6,10 +6,10 @@ from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from config import SBBackend, SBConfig
-from core_types import BeatState, Edge, EndpointDistribution, Layer
-from graph import SparseGraph
-from rng import RNGKey, random_unit
+from aimusic.core.config import SBBackend, SBConfig
+from aimusic.core.core_types import BeatState, Edge, EndpointDistribution, Layer
+from aimusic.planning.graph import SparseGraph
+from aimusic.core.rng import RNGKey, random_unit
 
 
 @dataclass(frozen=True)
@@ -456,8 +456,8 @@ def _compute_endpoint_reachability(
     pi0: EndpointDistribution,
     piT: EndpointDistribution,
 ) -> tuple[Tuple[set[BeatState], ...], Tuple[set[BeatState], ...]]:
-    forward_reachable = [set() for _ in layers]
-    backward_reachable = [set() for _ in layers]
+    forward_reachable: list[set[BeatState]] = [set() for _ in layers]
+    backward_reachable: list[set[BeatState]] = [set() for _ in layers]
 
     for idx in _positive_mass_state_indices(pi0):
         forward_reachable[0].add(layers[0].states[idx])

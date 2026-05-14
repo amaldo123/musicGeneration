@@ -1,6 +1,6 @@
 import unittest
 
-from rng import RNGKey, choice, randint, random_unit, shuffle
+from aimusic.core.rng import RNGKey, choice, randint, random_unit, shuffle
 
 
 class TestRNGKey(unittest.TestCase):

@@ -3,17 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from candidates import (
+from aimusic.planning.candidates import (
     CandidateGenerationResult,
     CandidateRejection,
     get_valid_next_states,
     is_legal_transition,
 )
-from config import PriorWeights, SBConfig, StyleConfig
-from core_types import BeatState, Edge, Layer
-from priors import NullPrior, Prior, PriorContext, calculate_transition_log_weight
-from tonal import basic_space_distance, tonal_distance
-from vocab import DEFAULT_VOCABULARIES, Vocabularies
+from aimusic.core.config import PriorWeights, SBConfig, StyleConfig
+from aimusic.core.core_types import BeatState, Edge, Layer
+from aimusic.scoring.priors import NullPrior, Prior, PriorContext, calculate_transition_log_weight
+from aimusic.theory.tonal import basic_space_distance, tonal_distance
+from aimusic.core.vocab import DEFAULT_VOCABULARIES, Vocabularies
 import numpy as np
 
 def _state_sort_key(state: BeatState) -> tuple[int, int, int, int, int, int, int, int]:

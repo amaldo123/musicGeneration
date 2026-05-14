@@ -1,12 +1,12 @@
 import unittest
 import numpy as np
 
-from candidates import is_legal_transition
-from config import PriorWeights, SBConfig, StyleConfig
-from core_types import BeatState, Layer
-from graph import build_sparse_graph
-from priors import NeuralPrior
-from vocab import DEFAULT_VOCABULARIES
+from aimusic.planning.candidates import is_legal_transition
+from aimusic.core.config import PriorWeights, SBConfig, StyleConfig
+from aimusic.core.core_types import BeatState, Layer
+from aimusic.planning.graph import build_sparse_graph
+from aimusic.scoring.priors import NeuralPrior
+from aimusic.core.vocab import DEFAULT_VOCABULARIES
 
 
 VOCABS = DEFAULT_VOCABULARIES

@@ -1,9 +1,9 @@
 import unittest
 from dataclasses import FrozenInstanceError
 
-from config import PriorWeights
-from core_types import BeatState
-from gttm_features import (
+from aimusic.core.config import PriorWeights
+from aimusic.core.core_types import BeatState
+from aimusic.scoring.gttm_features import (
     BEATSTATE_FEATURES,
     FEATURE_REGISTRY,
     TransitionWindow,
@@ -33,8 +33,8 @@ from gttm_features import (
     transition_feature_vector,
     weighted_feature_breakdown,
 )
-from tonal import nearest_roots, tonal_distance
-from vocab import DEFAULT_VOCABULARIES
+from aimusic.theory.tonal import nearest_roots, tonal_distance
+from aimusic.core.vocab import DEFAULT_VOCABULARIES
 
 
 VOCABS = DEFAULT_VOCABULARIES

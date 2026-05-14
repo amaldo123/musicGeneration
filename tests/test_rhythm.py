@@ -1,7 +1,7 @@
 import unittest
 
-from core_types import BeatState
-from rhythm_features import (
+from aimusic.core.core_types import BeatState
+from aimusic.scoring.rhythm_features import (
     DEFAULT_METERS,
     MeterSpec,
     W_BOUNDARY_ON_STRONG,
@@ -17,7 +17,7 @@ from rhythm_features import (
     sequence_score,
     transition_score,
 )
-from vocab import DEFAULT_VOCABULARIES, MeterToken
+from aimusic.core.vocab import DEFAULT_VOCABULARIES, MeterToken
 
 
 class TestRhythmHelpers(unittest.TestCase):

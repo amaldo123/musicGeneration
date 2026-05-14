@@ -1,7 +1,7 @@
 import unittest
 from dataclasses import FrozenInstanceError
 
-from config import (
+from aimusic.core.config import (
     DecodeConfig,
     EDOConfig,
     NeuralPriorConfig,

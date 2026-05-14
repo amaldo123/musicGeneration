@@ -1,5 +1,5 @@
 import unittest
-from gttm_features import (
+from aimusic.scoring.gttm_features import (
     MetricalGrid,
     MusicalEvent,
     Group,

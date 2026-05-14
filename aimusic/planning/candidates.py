@@ -4,12 +4,12 @@ from dataclasses import dataclass
 from typing import Mapping, Optional, Sequence, Tuple, Iterator
 import numpy as np
 
-from config import StyleConfig
-from core_types import BeatState
-from gttm_features import beats_per_bar, is_strong_beat
-from priors import NullPrior, Prior, PriorContext, PriorQuery, prior_logps
-from tonal import get_fifth_steps, nearest_roots
-from vocab import ChordToken, DEFAULT_VOCABULARIES, GrooveToken, Vocabularies
+from aimusic.core.config import StyleConfig
+from aimusic.core.core_types import BeatState
+from aimusic.scoring.gttm_features import beats_per_bar, is_strong_beat
+from aimusic.scoring.priors import NullPrior, Prior, PriorContext, PriorQuery, prior_logps
+from aimusic.theory.tonal import get_fifth_steps, nearest_roots
+from aimusic.core.vocab import ChordToken, DEFAULT_VOCABULARIES, GrooveToken, Vocabularies
 
 
 LEGAL_ROLE_SUCCESSORS: Mapping[str, frozenset[str]] = {
@@ -227,17 +227,23 @@ def apply_position_constraints(
     style_config: Optional[StyleConfig] = None,
     vocabularies: Optional[Vocabularies] = None,
 ) -> tuple[bool, Optional[str]]:
+    resolved_style = _resolved_style(style_config)
+    resolved_vocabs = _resolved_vocabs(vocabularies)
     meter_ok, meter_reason = apply_meter_constraints(
-        prev_state, next_candidate, style_config, vocabularies
+        prev_state, next_candidate, resolved_style, resolved_vocabs
     )
     if not meter_ok:
         return False, meter_reason
 
-    beats = beats_per_bar(next_candidate.meter_id, vocabularies.meters.id_map)
+    beats = beats_per_bar(next_candidate.meter_id, resolved_vocabs.meters.id_map)
     if next_candidate.beat_in_bar < 0 or next_candidate.beat_in_bar >= beats:
         return False, "invalid_beat_index"
 
-    expected_beat = _next_beat_index(prev_state, next_candidate.meter_id, vocabularies)
+    expected_beat = _next_beat_index(
+        prev_state,
+        next_candidate.meter_id,
+        resolved_vocabs,
+    )
     if next_candidate.beat_in_bar != expected_beat:
         return False, "non_contiguous_beat_progression"
 

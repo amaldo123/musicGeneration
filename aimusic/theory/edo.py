@@ -1,5 +1,5 @@
 from typing import Tuple
-from config import EDOConfig, MicrotonalRendering
+from aimusic.core.config import EDOConfig, MicrotonalRendering
 
 
 class EDO:
