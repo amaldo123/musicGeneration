@@ -5,7 +5,7 @@ import mido
 
 from aimusic.core.config import EDOConfig, MicrotonalRendering
 from aimusic.theory.edo import EDO
-from aimusic.render.midi_render import SymbolicNote, render_midi
+from aimusic.render.midi_render import SymbolicNote, render_midi, summarize_midi
 
 class TestMidiRender(unittest.TestCase):
     def setUp(self):
@@ -103,6 +103,28 @@ class TestMidiRender(unittest.TestCase):
         # Verify Channel Pressure
         self.assertEqual(len(at_events), 1)
         self.assertEqual(at_events[0].value, 60)
+    
+    def test_summarize_midi_helper(self):
+        """Tests that the inspection helper accurately tallies the MPE events in a file."""
+        notes = [
+            SymbolicNote(pitch_height=0, start_time=0.0, end_time=1.0),
+            SymbolicNote(pitch_height=1, start_time=0.0, end_time=1.0, timbre=100, pressure=50),
+        ]
+        
+        render_midi(notes, self.edo_19, self.output_path)
+        
+        summary = summarize_midi(self.output_path)
+        
+        # Verify the stats match with 2-note input
+        self.assertEqual(summary.total_notes, 2)
+        self.assertEqual(len(summary.unique_channels), 2)  
+        
+        # EDO 19 pitch height '1' requires a pitch bend
+        self.assertGreater(summary.pitch_bend_events, 0)
+        
+        # Only the second note had expressive controls
+        self.assertEqual(summary.timbre_events, 1)
+        self.assertEqual(summary.pressure_events, 1)
 
 if __name__ == "__main__":
     unittest.main()

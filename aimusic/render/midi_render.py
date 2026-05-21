@@ -106,3 +106,52 @@ def render_midi(
     track.append(mido.MetaMessage('end_of_track', time=0))
     
     mid.save(output_path)
+
+@dataclass(frozen=True)
+class MidiSummary:
+    """A statistical summary of a rendered MIDI file for quick inspection."""
+    total_notes: int
+    unique_channels: Tuple[int, ...]
+    pitch_bend_events: int
+    timbre_events: int
+    pressure_events: int
+
+    def print_report(self) -> None:
+        """Prints a human-readable console report of the MIDI file."""
+        print("\n=== MIDI Rendering Summary ===")
+        print(f"Total Notes Played:   {self.total_notes}")
+        print(f"Unique Channels Used: {len(self.unique_channels)} {self.unique_channels}")
+        print(f"Pitch Bend Events:    {self.pitch_bend_events}")
+        print(f"Timbre (CC74) Events: {self.timbre_events}")
+        print(f"Pressure Events:      {self.pressure_events}")
+        print("==============================\n")
+
+def summarize_midi(filepath: str) -> MidiSummary:
+    """Reads a .mid file from disk and tallies its expressive and structural contents."""
+    mid = mido.MidiFile(filepath)
+    
+    note_count = 0
+    channels = set()
+    pb_count = 0
+    timbre_count = 0
+    pressure_count = 0
+    
+    for track in mid.tracks:
+        for msg in track:
+            if msg.type == 'note_on' and msg.velocity > 0:
+                note_count += 1
+                channels.add(msg.channel)
+            elif msg.type == 'pitchwheel':
+                pb_count += 1
+            elif msg.type == 'control_change' and msg.control == 74:
+                timbre_count += 1
+            elif msg.type == 'aftertouch':
+                pressure_count += 1
+                
+    return MidiSummary(
+        total_notes=note_count,
+        unique_channels=tuple(sorted(channels)),
+        pitch_bend_events=pb_count,
+        timbre_events=timbre_count,
+        pressure_events=pressure_count
+    )
