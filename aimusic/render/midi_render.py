@@ -17,25 +17,20 @@ def _allocate_channels(notes: List[SymbolicNote]) -> List[Tuple[SymbolicNote, in
     Allocates MIDI channels (1-15) for notes to support MPE-style polyphony.
     Channel 0 is reserved as the MPE master channel.
     """
-    # Sort notes strictly by start time for chronologial allocation
+    
     sorted_notes = sorted(notes, key=lambda n: n.start_time)
     
     allocated_notes = []
-    # Track when each channel (1 through 15) becomes free
     channel_free_times: Dict[int, float] = {ch: 0.0 for ch in range(1, 16)}
     
     for note in sorted_notes:
-        # Find all channels that are free by the time this note starts
         free_channels = [ch for ch, free_time in channel_free_times.items() if free_time <= note.start_time]
         
         if free_channels:
-            # Pick the lowest available channel
             chosen_ch = free_channels[0]
         else:
-            # Voice stealing fallback: steal the channel that frees up earliest
-            chosen_ch = min(channel_free_times, key=channel_free_times.get)
+            chosen_ch = min(channel_free_times, key=lambda ch: channel_free_times[ch])
             
-        # Mark this channel as busy until the note ends
         channel_free_times[chosen_ch] = note.end_time
         allocated_notes.append((note, chosen_ch))
         
