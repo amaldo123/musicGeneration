@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import List, Tuple, Dict
 
 from aimusic.theory.edo import EDO
+from aimusic.core.config import MicrotonalRendering
 
 @dataclass(frozen=True)
 class SymbolicNote:
@@ -47,6 +48,12 @@ def render_midi(
     Supports N-EDO tunings via MPE-style channel allocation and pitch bends.
     """
     
+    if edo.config.microtonal_rendering_method == MicrotonalRendering.MTS:
+        raise NotImplementedError(
+            "MTS (MIDI Tuning Standard) rendering is currently deferred. "
+            "Due to limited modern VST support, please use MicrotonalRendering.MPE."
+        )
+        
     allocated_notes = _allocate_channels(notes)
 
     events: List[Tuple[int, int, str, int, int, int]] = []

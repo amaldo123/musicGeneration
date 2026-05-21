@@ -68,6 +68,19 @@ class TestMidiRender(unittest.TestCase):
         detuned_note_channel = note_on_events[1].channel
         bend_channel = pitchwheel_events[0].channel
         self.assertEqual(detuned_note_channel, bend_channel)
+    
+    def test_mts_rendering_is_deferred(self):
+        """Ensures MTS rendering is clearly documented as deferred with an exception."""
+        config_mts = EDOConfig(
+            n=19, base_tuning=60, pitch_bend_range=48, microtonal_rendering_method=MicrotonalRendering.MTS
+        )
+        edo_mts = EDO(config_mts)
+        notes = [SymbolicNote(pitch_height=0, start_time=0.0, end_time=1.0)]
+        
+        with self.assertRaises(NotImplementedError) as context:
+            render_midi(notes, edo_mts, self.output_path)
+            
+        self.assertIn("deferred", str(context.exception))
 
 if __name__ == "__main__":
     unittest.main()
