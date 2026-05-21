@@ -82,5 +82,27 @@ class TestMidiRender(unittest.TestCase):
             
         self.assertIn("deferred", str(context.exception))
 
+    def test_expressive_controls_rendered(self):
+        """Tests that MPE Timbre (CC74) and Pressure (Aftertouch) are correctly written."""
+        notes = [SymbolicNote(pitch_height=0, start_time=0.0, end_time=1.0, velocity=100, 
+                timbre=85, pressure=60)]
+        
+        render_midi(notes, self.edo_12, self.output_path)
+        
+        mid = mido.MidiFile(self.output_path)
+        
+        # Extract events
+        cc_events = [msg for msg in mid.tracks[0] if msg.type == 'control_change']
+        at_events = [msg for msg in mid.tracks[0] if msg.type == 'aftertouch']
+        
+        # Verify Timbre (CC74)
+        self.assertEqual(len(cc_events), 1)
+        self.assertEqual(cc_events[0].control, 74)
+        self.assertEqual(cc_events[0].value, 85)
+        
+        # Verify Channel Pressure
+        self.assertEqual(len(at_events), 1)
+        self.assertEqual(at_events[0].value, 60)
+
 if __name__ == "__main__":
     unittest.main()

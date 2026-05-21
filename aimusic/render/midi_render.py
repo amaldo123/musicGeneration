@@ -11,7 +11,9 @@ class SymbolicNote:
     pitch_height: int
     start_time: float  
     end_time: float    
-    velocity: int = 64
+    velocity: int = 64  
+    timbre: int | None = None      
+    pressure: int | None = None    
 
 def _allocate_channels(notes: List[SymbolicNote]) -> List[Tuple[SymbolicNote, int]]:
     """
@@ -53,14 +55,13 @@ def render_midi(
             "MTS (MIDI Tuning Standard) rendering is currently deferred. "
             "Due to limited modern VST support, please use MicrotonalRendering.MPE."
         )
-        
+
     allocated_notes = _allocate_channels(notes)
 
     events: List[Tuple[int, int, str, int, int, int]] = []
     
     for note, channel in allocated_notes:
         midi_note, pitch_bend = edo.to_midi(note.pitch_height)
-        
         start_tick = int(note.start_time * ticks_per_beat)
         end_tick = int(note.end_time * ticks_per_beat)
         
@@ -68,8 +69,14 @@ def render_midi(
         
         if pitch_bend != 0:
             events.append((start_tick, 1, 'pitchwheel', pitch_bend, 0, channel))
-           
-        events.append((start_tick, 2, 'note_on', midi_note, note.velocity, channel))
+            
+        if note.timbre is not None:
+            events.append((start_tick, 2, 'control_change', 74, note.timbre, channel))
+            
+        if note.pressure is not None:
+            events.append((start_tick, 3, 'aftertouch', note.pressure, 0, channel))
+        
+        events.append((start_tick, 4, 'note_on', midi_note, note.velocity, channel))
         
     events.sort()
     
@@ -87,9 +94,13 @@ def render_midi(
         
         if msg_type == 'pitchwheel':
             track.append(mido.Message('pitchwheel', pitch=val1, time=delta_tick, channel=ch))
+        elif msg_type == 'control_change':
+            track.append(mido.Message('control_change', control=val1, value=val2, time=delta_tick, channel=ch))
+        elif msg_type == 'aftertouch':
+            track.append(mido.Message('aftertouch', value=val1, time=delta_tick, channel=ch))
         else:
             track.append(mido.Message(msg_type, note=val1, velocity=val2, time=delta_tick, channel=ch))
-        
+            
         current_tick = abs_tick
         
     track.append(mido.MetaMessage('end_of_track', time=0))
