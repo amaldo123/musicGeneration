@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence, Tuple
 
 from aimusic.core.config import DecodeConfig
@@ -84,7 +83,9 @@ def _unit_to_expression(tension: float, decode_config: DecodeConfig) -> float:
     return low + ((high - low) * tension)
 
 
-def _should_emit(track_density: float, beat_index: int, tension: float, *, strong: bool) -> bool:
+def _should_emit(
+    track_density: float, beat_index: int, tension: float, *, strong: bool
+) -> bool:
     if track_density <= 0.0:
         return False
     activation = track_density + (0.15 * tension) + (0.2 if strong else 0.0)
@@ -107,7 +108,12 @@ def build_subbeat_grid(
     grids = []
     for beat_index, _ in enumerate(states):
         start = beat_index * ticks_per_beat
-        grids.append(tuple(start + (step * offset) for offset in range(resolved_decode.subbeats_per_beat)))
+        grids.append(
+            tuple(
+                start + (step * offset)
+                for offset in range(resolved_decode.subbeats_per_beat)
+            )
+        )
     return tuple(grids)
 
 
@@ -172,7 +178,9 @@ def _head_pitch_class(state: BeatState, vocabularies: Vocabularies, edo: int) ->
     }.get(chord.quality, minor_seventh)
     intervals = {
         "root": 0,
-        "third": round(4 * edo / 12) if chord.quality != "min" and chord.quality != "dim" else round(3 * edo / 12),
+        "third": round(4 * edo / 12)
+        if chord.quality != "min" and chord.quality != "dim"
+        else round(3 * edo / 12),
         "fifth": get_fifth_steps(edo),
         "seventh": seventh_interval,
         "upper_approach": 1,
@@ -216,7 +224,9 @@ def _append_event(
 
 
 def _cleanup_events(events: Sequence[NoteEvent]) -> Tuple[NoteEvent, ...]:
-    by_track = sorted(events, key=lambda event: (event.track, event.h, event.ton, event.toff))
+    by_track = sorted(
+        events, key=lambda event: (event.track, event.h, event.ton, event.toff)
+    )
     cleaned: list[NoteEvent] = []
     last_by_voice: dict[tuple[str, int], NoteEvent] = {}
     for event in by_track:
@@ -236,7 +246,9 @@ def _cleanup_events(events: Sequence[NoteEvent]) -> Tuple[NoteEvent, ...]:
             last_by_voice[key] = cleaned[-1]
         cleaned.append(event)
         last_by_voice[key] = event
-    return tuple(sorted(cleaned, key=lambda event: (event.ton, event.track, event.h, event.toff)))
+    return tuple(
+        sorted(cleaned, key=lambda event: (event.ton, event.track, event.h, event.toff))
+    )
 
 
 def generate_bass_events(
@@ -255,14 +267,23 @@ def generate_bass_events(
     for beat_index, state in enumerate(states):
         tension = _tension_level(state, vocabularies)
         strong = state.beat_in_bar in _strong_beats(state, vocabularies)
-        if not _should_emit(resolved_decode.bass_density, beat_index, tension, strong=strong):
+        if not _should_emit(
+            resolved_decode.bass_density, beat_index, tension, strong=strong
+        ):
             continue
         chord = _chord_token(state, vocabularies)
         role = _role_label(state, vocabularies)
         pitch_pc = chord.root_pc if role != "prep" else pc(chord.root_pc - 1, edo)
-        pitch = _nearest_pitch(prev_pitch, (pitch_pc, pc(chord.root_pc + get_fifth_steps(edo), edo)), resolved_decode.bass_register, edo)
+        pitch = _nearest_pitch(
+            prev_pitch,
+            (pitch_pc, pc(chord.root_pc + get_fifth_steps(edo), edo)),
+            resolved_decode.bass_register,
+            edo,
+        )
         if state.boundary_lvl > 0:
-            pitch = _fit_pitch_to_register(chord.root_pc, resolved_decode.bass_register, edo)
+            pitch = _fit_pitch_to_register(
+                chord.root_pc, resolved_decode.bass_register, edo
+            )
         ton = beat_index * ticks_per_beat
         duration = ticks_per_beat if role != "change" else ticks_per_beat // 2
         _append_event(
@@ -298,7 +319,9 @@ def generate_comping_events(
         offsets = _family_offsets(groove, resolved_decode.subbeats_per_beat)
         tension = _tension_level(state, vocabularies)
         chord = _chord_token(state, vocabularies)
-        pitch_classes = tuple(sorted(chord_pitch_classes(chord.root_pc, chord.quality, edo)))
+        pitch_classes = tuple(
+            sorted(chord_pitch_classes(chord.root_pc, chord.quality, edo))
+        )
         voice_count = max(
             resolved_decode.min_comping_voices,
             min(resolved_decode.max_comping_voices, len(pitch_classes)),
@@ -308,13 +331,23 @@ def generate_comping_events(
         voices: list[int] = []
         for voice_idx in range(voice_count):
             target_pc = pitch_classes[voice_idx % len(pitch_classes)]
-            prev_pitch = None if previous_voicing is None or voice_idx >= len(previous_voicing) else previous_voicing[voice_idx]
+            prev_pitch = (
+                None
+                if previous_voicing is None or voice_idx >= len(previous_voicing)
+                else previous_voicing[voice_idx]
+            )
             voices.append(
-                _nearest_pitch(prev_pitch, (target_pc,), resolved_decode.comping_register, edo)
+                _nearest_pitch(
+                    prev_pitch, (target_pc,), resolved_decode.comping_register, edo
+                )
             )
         previous_voicing = tuple(sorted(voices))
-        for offset in offsets[: max(1, round(resolved_decode.comping_density * len(offsets)))]:
-            ton = (beat_index * ticks_per_beat) + ((ticks_per_beat // resolved_decode.subbeats_per_beat) * offset)
+        for offset in offsets[
+            : max(1, round(resolved_decode.comping_density * len(offsets)))
+        ]:
+            ton = (beat_index * ticks_per_beat) + (
+                (ticks_per_beat // resolved_decode.subbeats_per_beat) * offset
+            )
             for pitch in previous_voicing:
                 _append_event(
                     events,
@@ -344,13 +377,17 @@ def generate_lead_events(
     for beat_index, state in enumerate(states):
         tension = _tension_level(state, vocabularies)
         strong = state.beat_in_bar in _strong_beats(state, vocabularies)
-        if not _should_emit(resolved_decode.lead_density, beat_index, tension, strong=strong):
+        if not _should_emit(
+            resolved_decode.lead_density, beat_index, tension, strong=strong
+        ):
             continue
         head = _head_label(state, vocabularies)
         if head == "rest" and state.boundary_lvl == 0:
             continue
         head_pc = _head_pitch_class(state, vocabularies, edo)
-        pitch = _nearest_pitch(prev_pitch, (head_pc,), resolved_decode.lead_register, edo)
+        pitch = _nearest_pitch(
+            prev_pitch, (head_pc,), resolved_decode.lead_register, edo
+        )
         pitch = _clamp_leap(prev_pitch, pitch, resolved_decode.max_lead_leap_steps)
         ton = beat_index * ticks_per_beat
         duration = ticks_per_beat if state.boundary_lvl > 0 else ticks_per_beat // 2
@@ -382,14 +419,20 @@ def generate_drum_events(
     for beat_index, state in enumerate(states):
         tension = _tension_level(state, vocabularies)
         strong = state.beat_in_bar in _strong_beats(state, vocabularies)
-        if not _should_emit(resolved_decode.drum_density, beat_index, tension, strong=strong):
+        if not _should_emit(
+            resolved_decode.drum_density, beat_index, tension, strong=strong
+        ):
             continue
         groove = _groove_token(state, vocabularies)
         offsets = _family_offsets(groove, resolved_decode.subbeats_per_beat)
         offset_count = max(1, round(resolved_decode.drum_density * len(offsets)))
         for offset in offsets[:offset_count]:
             ton = (beat_index * ticks_per_beat) + (offset * step_ticks)
-            pitch = DRUM_PITCHES["kick"] if strong and offset == 0 else DRUM_PITCHES["hat_closed"]
+            pitch = (
+                DRUM_PITCHES["kick"]
+                if strong and offset == 0
+                else DRUM_PITCHES["hat_closed"]
+            )
             if offset == 0 and not strong:
                 pitch = DRUM_PITCHES["snare"]
             if state.boundary_lvl > 1 and offset == 0:
@@ -420,10 +463,45 @@ def decode_path_to_score(
     states = _decode_states(path, include_terminal_state=include_terminal_state)
     resolved_decode = DecodeConfig() if decode_config is None else decode_config
     events = (
-        list(generate_comping_events(states, decode_config=resolved_decode, vocabularies=vocabularies, edo=edo, ticks_per_beat=ticks_per_beat, include_terminal_state=True))
-        + list(generate_bass_events(states, decode_config=resolved_decode, vocabularies=vocabularies, edo=edo, ticks_per_beat=ticks_per_beat, include_terminal_state=True))
-        + list(generate_lead_events(states, decode_config=resolved_decode, vocabularies=vocabularies, edo=edo, ticks_per_beat=ticks_per_beat, include_terminal_state=True))
-        + list(generate_drum_events(states, decode_config=resolved_decode, vocabularies=vocabularies, ticks_per_beat=ticks_per_beat, include_terminal_state=True))
+        list(
+            generate_comping_events(
+                states,
+                decode_config=resolved_decode,
+                vocabularies=vocabularies,
+                edo=edo,
+                ticks_per_beat=ticks_per_beat,
+                include_terminal_state=True,
+            )
+        )
+        + list(
+            generate_bass_events(
+                states,
+                decode_config=resolved_decode,
+                vocabularies=vocabularies,
+                edo=edo,
+                ticks_per_beat=ticks_per_beat,
+                include_terminal_state=True,
+            )
+        )
+        + list(
+            generate_lead_events(
+                states,
+                decode_config=resolved_decode,
+                vocabularies=vocabularies,
+                edo=edo,
+                ticks_per_beat=ticks_per_beat,
+                include_terminal_state=True,
+            )
+        )
+        + list(
+            generate_drum_events(
+                states,
+                decode_config=resolved_decode,
+                vocabularies=vocabularies,
+                ticks_per_beat=ticks_per_beat,
+                include_terminal_state=True,
+            )
+        )
     )
     return Score(
         note_events=_cleanup_events(events),
