@@ -1,12 +1,14 @@
 import unittest
 
 from aimusic.core.config import DecodeConfig
-from aimusic.core.core_types import BeatState
+from aimusic.core.core_types import BeatState, NoteEvent
 from aimusic.core.vocab import DEFAULT_VOCABULARIES
 from aimusic.decode import (
     DEFAULT_TICKS_PER_BEAT,
+    _cleanup_events,
     build_subbeat_grid,
     decode_path_to_score,
+    generate_bass_events,
     generate_comping_events,
     generate_lead_events,
 )
@@ -169,6 +171,87 @@ class TestDecodeTracks(unittest.TestCase):
         sparse_lead = [event for event in sparse_score.note_events if event.track == "lead"]
         dense_lead = [event for event in dense_score.note_events if event.track == "lead"]
         self.assertLess(len(sparse_lead), len(dense_lead))
+
+    def test_tension_changes_velocity_expression_and_articulation_proxy(self):
+        hold_path = (state(chord="Cmaj", role="hold", head="root"),)
+        cad_path = (state(chord="Cmaj", role="cad", head="root"),)
+        change_path = (state(chord="Cmaj", role="change", head="root"),)
+
+        hold_bass = generate_bass_events(
+            hold_path,
+            decode_config=DecodeConfig(bass_density=1.0),
+            vocabularies=VOCABS,
+            include_terminal_state=True,
+        )
+        cad_bass = generate_bass_events(
+            cad_path,
+            decode_config=DecodeConfig(bass_density=1.0),
+            vocabularies=VOCABS,
+            include_terminal_state=True,
+        )
+        change_bass = generate_bass_events(
+            change_path,
+            decode_config=DecodeConfig(bass_density=1.0),
+            vocabularies=VOCABS,
+            include_terminal_state=True,
+        )
+
+        self.assertEqual(len(hold_bass), 1)
+        self.assertEqual(len(cad_bass), 1)
+        self.assertEqual(len(change_bass), 1)
+        self.assertLess(hold_bass[0].v, cad_bass[0].v)
+        self.assertLess(hold_bass[0].e[0], cad_bass[0].e[0])
+        self.assertEqual(hold_bass[0].toff - hold_bass[0].ton, DEFAULT_TICKS_PER_BEAT)
+        self.assertEqual(
+            change_bass[0].toff - change_bass[0].ton, DEFAULT_TICKS_PER_BEAT // 2
+        )
+
+    def test_overlap_cleanup_truncates_first_same_track_same_pitch_event(self):
+        overlapping = (
+            NoteEvent(
+                ton=0,
+                toff=DEFAULT_TICKS_PER_BEAT,
+                h=60,
+                v=0.5,
+                e=(0.2,),
+                track="lead",
+            ),
+            NoteEvent(
+                ton=DEFAULT_TICKS_PER_BEAT // 2,
+                toff=(DEFAULT_TICKS_PER_BEAT // 2) + DEFAULT_TICKS_PER_BEAT,
+                h=60,
+                v=0.7,
+                e=(0.4,),
+                track="lead",
+            ),
+        )
+
+        cleaned = _cleanup_events(overlapping)
+
+        self.assertEqual(len(cleaned), 2)
+        self.assertEqual(cleaned[0].ton, 0)
+        self.assertEqual(cleaned[0].toff, DEFAULT_TICKS_PER_BEAT // 2)
+        self.assertEqual(cleaned[1].ton, DEFAULT_TICKS_PER_BEAT // 2)
+        self.assertEqual(cleaned[1].toff, (DEFAULT_TICKS_PER_BEAT // 2) + DEFAULT_TICKS_PER_BEAT)
+
+    def test_bass_prep_role_uses_lower_neighbor_approach_into_next_root(self):
+        path = (
+            state(chord="Cmaj", role="hold", head="root", boundary="phrase"),
+            state(beat=1, chord="Cmaj", role="prep", head="root"),
+            state(beat=2, chord="Cmaj", role="cad", head="root"),
+        )
+
+        bass_events = generate_bass_events(
+            path,
+            decode_config=DecodeConfig(bass_density=1.0),
+            vocabularies=VOCABS,
+            include_terminal_state=True,
+        )
+
+        self.assertEqual(len(bass_events), 3)
+        self.assertEqual(bass_events[1].h % 12, 11)
+        self.assertEqual(bass_events[2].h % 12, 0)
+        self.assertEqual((bass_events[2].h - bass_events[1].h) % 12, 1)
 
     def test_decode_generates_multi_track_score(self):
         path = (
