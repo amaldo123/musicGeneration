@@ -69,6 +69,7 @@ The implementation now lives under the `aimusic/` package and is grouped by resp
 | `aimusic.planning.graph`             | Layer expansion, sparse edge building, pruning.              |
 | `aimusic.planning.plans`             | Endpoint generation, section metadata, and Method A orchestration. |
 | `aimusic.planning.sb`                | Schrödinger bridge solver, bridge extraction, sampling, and MAP path extraction. |
+| `aimusic.decode`                     | BeatState path to multi-track symbolic Score decoding.       |
 | `aimusic.app.main`                   | Application / demo entrypoints.                              |
 
 The test suite lives under `tests/` and imports the packaged modules directly.

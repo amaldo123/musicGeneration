@@ -213,21 +213,21 @@ The major missing pieces are:
 
 **Tasks**
 
-- [ ] Define the symbolic `Score` container and track-level event assembly rules.
-- [ ] Build sub-beat grids from groove tokens and decode quantization settings.
-- [ ] Implement comping realization with voicing rules and voice-leading constraints.
-- [ ] Implement bass-line generation with register control and approach-tone logic.
-- [ ] Implement lead generation anchored to head tokens with contour and resolution constraints.
-- [ ] Implement drum generation tied to groove families and section boundaries.
-- [ ] Map structural tension and roles into velocity, density, articulation proxies, and expressive controls.
-- [ ] Handle rests, sustain, and overlap cleanup across tracks.
-- [ ] Add decoder tests for chord-tone anchoring, register limits, voice-leading sanity, and track density behavior.
+- [x] Define the symbolic `Score` container and track-level event assembly rules.
+- [x] Build sub-beat grids from groove tokens and decode quantization settings.
+- [x] Implement comping realization with voicing rules and voice-leading constraints.
+- [x] Implement bass-line generation with register control and approach-tone logic.
+- [x] Implement lead generation anchored to head tokens with contour and resolution constraints.
+- [x] Implement drum generation tied to groove families and section boundaries.
+- [x] Map structural tension and roles into velocity, density, articulation proxies, and expressive controls.
+- [x] Handle rests, sustain, and overlap cleanup across tracks.
+- [x] Add decoder tests for chord-tone anchoring, register limits, voice-leading sanity, and track density behavior.
 
 **Definition of done**
 
-- [ ] A `BeatState` path can be decoded into a coherent multi-track `Score`.
-- [ ] Decoder behavior is modular by track generator and testable without MIDI export.
-- [ ] The score remains EDO-native until the rendering stage.
+- [x] A `BeatState` path can be decoded into a coherent multi-track `Score`.
+- [x] Decoder behavior is modular by track generator and testable without MIDI export.
+- [x] The score remains EDO-native until the rendering stage.
 
 ### EPIC 8: MIDI Rendering and Export
 
