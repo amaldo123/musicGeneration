@@ -77,7 +77,9 @@ class TestDecodeTracks(unittest.TestCase):
     def test_major_chord_seventh_head_uses_major_seventh(self):
         path = (state(chord="Cmaj", head="seventh"),)
 
-        lead_events = generate_lead_events(path, vocabularies=VOCABS, include_terminal_state=True)
+        lead_events = generate_lead_events(
+            path, vocabularies=VOCABS, include_terminal_state=True
+        )
 
         self.assertEqual(len(lead_events), 1)
         self.assertEqual(lead_events[0].h % 12, 11)
@@ -119,16 +121,25 @@ class TestDecodeTracks(unittest.TestCase):
             state(beat=2, chord="Amin"),
             state(beat=3, chord="Fmaj"),
         )
-        comping = generate_comping_events(path, vocabularies=VOCABS, include_terminal_state=True)
+        comping = generate_comping_events(
+            path, vocabularies=VOCABS, include_terminal_state=True
+        )
 
         by_onset = {}
         for event in comping:
             by_onset.setdefault(event.ton, []).append(event.h)
         ordered = [tuple(sorted(by_onset[ton])) for ton in sorted(by_onset)]
         for previous, current in zip(ordered, ordered[1:]):
-            paired = zip(previous, current)
-            for prev_pitch, next_pitch in paired:
-                self.assertLessEqual(abs(next_pitch - prev_pitch), 7)
+            for next_pitch in current:
+                self.assertLessEqual(
+                    min(abs(next_pitch - prev_pitch) for prev_pitch in previous),
+                    7,
+                )
+            for prev_pitch in previous:
+                self.assertLessEqual(
+                    min(abs(prev_pitch - next_pitch) for next_pitch in current),
+                    7,
+                )
 
     def test_density_controls_can_suppress_tracks(self):
         path = (
@@ -142,7 +153,9 @@ class TestDecodeTracks(unittest.TestCase):
             drum_density=0.0,
         )
 
-        score = decode_path_to_score(path, decode_config=decode_config, vocabularies=VOCABS)
+        score = decode_path_to_score(
+            path, decode_config=decode_config, vocabularies=VOCABS
+        )
 
         self.assertEqual(score.note_events, ())
 
@@ -168,8 +181,12 @@ class TestDecodeTracks(unittest.TestCase):
             include_terminal_state=True,
         )
 
-        sparse_lead = [event for event in sparse_score.note_events if event.track == "lead"]
-        dense_lead = [event for event in dense_score.note_events if event.track == "lead"]
+        sparse_lead = [
+            event for event in sparse_score.note_events if event.track == "lead"
+        ]
+        dense_lead = [
+            event for event in dense_score.note_events if event.track == "lead"
+        ]
         self.assertLess(len(sparse_lead), len(dense_lead))
 
     def test_tension_changes_velocity_expression_and_articulation_proxy(self):
@@ -232,7 +249,9 @@ class TestDecodeTracks(unittest.TestCase):
         self.assertEqual(cleaned[0].ton, 0)
         self.assertEqual(cleaned[0].toff, DEFAULT_TICKS_PER_BEAT // 2)
         self.assertEqual(cleaned[1].ton, DEFAULT_TICKS_PER_BEAT // 2)
-        self.assertEqual(cleaned[1].toff, (DEFAULT_TICKS_PER_BEAT // 2) + DEFAULT_TICKS_PER_BEAT)
+        self.assertEqual(
+            cleaned[1].toff, (DEFAULT_TICKS_PER_BEAT // 2) + DEFAULT_TICKS_PER_BEAT
+        )
 
     def test_bass_prep_role_uses_lower_neighbor_approach_into_next_root(self):
         path = (
