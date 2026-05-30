@@ -1,7 +1,13 @@
+import os
+import tempfile
+import json
+from pathlib import Path
 import unittest
 import dataclasses
 import math
 from unittest.mock import MagicMock
+
+# --- Diagnostics Imports ---
 from aimusic.core.diagnostics import (
     TimelineEvent, 
     StructuralDiagnostics, 
@@ -9,6 +15,18 @@ from aimusic.core.diagnostics import (
     RunManifest,
     SBDiagnostics
 )
+# --- Math Pipeline Imports ---
+from aimusic.core.config import SBConfig, SBBackend
+from aimusic.core.core_types import BeatState, Edge, EndpointDistribution, Layer
+from aimusic.planning.graph import SparseGraph
+from aimusic.planning.sb import (
+    build_sb_problem, 
+    solve_sb, 
+    map_bridge_path,
+    solved_bridge_from_solution
+)
+from aimusic.render.midi_render import SymbolicNote, render_midi
+from aimusic.theory.edo import EDO, EDOConfig
 
 class TestDiagnostics(unittest.TestCase):
     def test_timeline_event_serialization(self):
@@ -64,7 +82,7 @@ class TestDiagnostics(unittest.TestCase):
         self.assertEqual(curve[1], (4.0, 0.5))
         self.assertEqual(curve[2], (8.0, 0.9))
         self.assertEqual(curve[3], (12.0, 0.5)) 
-        
+
     def test_sb_diagnostics_extraction(self):
         """Tests that SB logs and Effective Entropy are correctly calculated from a solution."""
         # Mock the SBSolution object returned by aimusic.planning.sb
@@ -109,6 +127,113 @@ class TestDiagnostics(unittest.TestCase):
         self.assertIsNotNone(data["run_id"])
         self.assertIsNotNone(data["timestamp"])
         self.assertIn("structure", data)
+    
+    # END-TO-END PASSAGE FIXTURE 
+    def test_e2e_produce_stable_short_passage(self):
+        """
+        True E2E Fixture: 
+        1. Runs the real math engine to get a deterministic path.
+        2. Translates it into a musical passage (SymbolicNotes).
+        3. PRODUCES physical output files (MIDI and Manifest).
+        4. Asserts the production is identical every time.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_dir = Path(tmpdir)
+            
+            # SETUP THE MATH FIXTURE (The Short Passage)
+            def _make_state(time_idx: int, var_id: int) -> BeatState:
+                return BeatState(
+                    meter_id=0, 
+                    beat_in_bar=time_idx, 
+                    boundary_lvl=0, 
+                    key_id=0, 
+                    chord_id=var_id, 
+                    role_id=0, 
+                    head_id=0, 
+                    groove_id=0
+                )
+
+            state_start = _make_state(0, 0)  
+            state_mid_a = _make_state(1, 1)  
+            state_mid_b = _make_state(1, 2)  
+            state_end = _make_state(2, 3)    
+
+            layer_0 = Layer(time_index=0, states=(state_start,))
+            layer_1 = Layer(time_index=1, states=(state_mid_a, state_mid_b))
+            layer_2 = Layer(time_index=2, states=(state_end,))
+
+            edges_0 = (
+                Edge(source=state_start, target=state_mid_a, log_weight=math.log(0.9), time_index=0),
+                Edge(source=state_start, target=state_mid_b, log_weight=math.log(0.1), time_index=0),
+            )
+            edges_1 = (
+                Edge(source=state_mid_a, target=state_end, log_weight=math.log(1.0), time_index=1),
+                Edge(source=state_mid_b, target=state_end, log_weight=math.log(1.0), time_index=1),
+            )
+
+            graph = SparseGraph(
+                layers=(layer_0, layer_1, layer_2), 
+                edges_by_time=(edges_0, edges_1),
+                diagnostics=MagicMock() 
+            )
+            
+            pi0 = EndpointDistribution(layer=layer_0, probabilities=(1.0,))
+            piT = EndpointDistribution(layer=layer_2, probabilities=(1.0,))
+            config = SBConfig(horizon_t=2, max_iterations=10, tolerance=1e-5, backend_selection=SBBackend.NUMPY)
+
+            # EXECUTE MATH PIPELINE
+            problem = build_sb_problem(graph, pi0, piT, config)
+            solution = solve_sb(problem)
+            bridge = solved_bridge_from_solution(solution)
+            path, best_score = map_bridge_path(bridge)
+            
+            # Strict math assertion
+            self.assertEqual(path, (state_start, state_mid_a, state_end))
+
+            # TRANSLATE TO MUSICAL PASSAGE (Connecting the pipeline)
+            state_to_pitch = {
+                state_start: 60, # C4
+                state_mid_a: 64, # E4
+                state_mid_b: 65, # F4 (Should not be picked)
+                state_end: 67    # G4
+            }
+            
+            notes = []
+            for i, state in enumerate(path):
+                notes.append(SymbolicNote(
+                    pitch_height=state_to_pitch[state],
+                    start_time=float(i),
+                    end_time=float(i + 1)
+                ))
+
+            # PRODUCE PHYSICAL OUTPUTS (MIDI and Manifest)
+            midi_path = out_dir / "stable_passage.mid"
+            manifest_path = out_dir / "stable_passage_manifest.json"
+            
+            # Produce MIDI
+            edo_12 = EDO(EDOConfig(n=12, base_tuning=60, pitch_bend_range=48))
+            render_midi(notes, edo_12, str(midi_path))
+            
+            # Produce Manifest
+            manifest = RunManifest(
+                seed=42,
+                config_dump={"edo": 12},
+                sb_stats=SBDiagnostics.from_solution(solution)
+            )
+            with open(manifest_path, "w") as f:
+                json.dump(manifest.to_dict(), f)
+
+            # REGRESSION TRAPS ON PRODUCED FILES
+            self.assertTrue(midi_path.exists(), "Pipeline failed to produce MIDI file.")
+            self.assertTrue(manifest_path.exists(), "Pipeline failed to produce Manifest file.")
+            
+            with open(manifest_path, "r") as f:
+                saved_manifest = json.load(f)
+            self.assertTrue(saved_manifest["sb_stats"]["converged"])
+            self.assertEqual(saved_manifest["sb_stats"]["layer_sizes"], [1, 2, 1])
+
+            self.assertEqual(len(notes), 3)
+            self.assertEqual(notes[1].pitch_height, 64, "Regression: Pipeline picked wrong structural path")
 
 if __name__ == "__main__":
     unittest.main()
