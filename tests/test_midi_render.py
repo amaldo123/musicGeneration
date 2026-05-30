@@ -127,5 +127,16 @@ class TestMidiRender(unittest.TestCase):
         self.assertEqual(summary.timbre_events, 1)
         self.assertEqual(summary.pressure_events, 1)
 
+    def test_mpe_polyphony_limit_enforcement(self):
+        """Ensures the renderer safely fails instead of corrupting MPE channels when > 15 notes overlap."""
+        
+        # Create 16 notes that all play at the exact same time (0.0 to 1.0)
+        # Since MPE only has 15 free channels (1-15), the 16th note must trigger the safe failure.
+        notes = [SymbolicNote(pitch_height=i, start_time=0.0, end_time=1.0) for i in range(16)]
+        
+        with self.assertRaises(ValueError) as context:
+            render_midi(notes, self.edo_12, self.output_path)
+            
+        self.assertIn("MPE polyphony limit exceeded", str(context.exception))
 if __name__ == "__main__":
     unittest.main()

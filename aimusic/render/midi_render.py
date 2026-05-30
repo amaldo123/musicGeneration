@@ -19,6 +19,7 @@ def _allocate_channels(notes: List[SymbolicNote]) -> List[Tuple[SymbolicNote, in
     """
     Allocates MIDI channels (1-15) for notes to support MPE-style polyphony.
     Channel 0 is reserved as the MPE master channel.
+    Raises ValueError if more than 15 notes overlap simultaneously.
     """
     
     sorted_notes = sorted(notes, key=lambda n: n.start_time)
@@ -29,11 +30,15 @@ def _allocate_channels(notes: List[SymbolicNote]) -> List[Tuple[SymbolicNote, in
     for note in sorted_notes:
         free_channels = [ch for ch, free_time in channel_free_times.items() if free_time <= note.start_time]
         
-        if free_channels:
-            chosen_ch = free_channels[0]
-        else:
-            chosen_ch = min(channel_free_times, key=lambda ch: channel_free_times[ch])
+        # Explicit policy for MPE polyphony overflow.
+        if not free_channels:
+            raise ValueError(
+                f"MPE polyphony limit exceeded: Attempted to play > 15 overlapping notes "
+                f"at time {note.start_time}. No free channels available."
+            )
             
+        chosen_ch = free_channels[0]
+        
         channel_free_times[chosen_ch] = note.end_time
         allocated_notes.append((note, chosen_ch))
         
