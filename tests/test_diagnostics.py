@@ -1,10 +1,13 @@
 import unittest
 import dataclasses
+import math
+from unittest.mock import MagicMock
 from aimusic.core.diagnostics import (
     TimelineEvent, 
     StructuralDiagnostics, 
     compute_tension_curve,
-    RunManifest
+    RunManifest,
+    SBDiagnostics
 )
 
 class TestDiagnostics(unittest.TestCase):
@@ -61,6 +64,40 @@ class TestDiagnostics(unittest.TestCase):
         self.assertEqual(curve[1], (4.0, 0.5))
         self.assertEqual(curve[2], (8.0, 0.9))
         self.assertEqual(curve[3], (12.0, 0.5)) 
+        
+    def test_sb_diagnostics_extraction(self):
+        """Tests that SB logs and Effective Entropy are correctly calculated from a solution."""
+        # Mock the SBSolution object returned by aimusic.planning.sb
+        mock_solution = MagicMock()
+        mock_solution.trace.iterations = 42
+        mock_solution.trace.converged = True
+        mock_solution.trace.final_max_delta = 1e-6
+        
+        mock_solution.problem.diagnostics.layer_sizes = (5, 10, 5)
+        mock_solution.problem.diagnostics.zero_outdegree_count = 2
+        mock_solution.problem.diagnostics.zero_indegree_count = 1
+        
+        # Layer 1: Confident (entropy = 0)
+        # Layer 2: 50/50 Split (entropy = approx 0.693)
+        mock_solution.marginals.node_marginals_by_layer = [
+            (1.0, 0.0),      
+            (0.5, 0.5)       
+        ]
+
+        #Extract Data
+        stats = SBDiagnostics.from_solution(mock_solution)
+
+        #Verify Basic Stats
+        self.assertEqual(stats.iterations_run, 42)
+        self.assertTrue(stats.converged)
+        self.assertEqual(stats.final_max_delta, 1e-6)
+        self.assertEqual(stats.layer_sizes, [5, 10, 5])
+        self.assertEqual(stats.pruned_nodes, 3) # 2 out + 1 in
+
+        # Verify Shannon Entropy Math
+        expected_layer_2_entropy = -(0.5 * math.log(0.5)) * 2
+        expected_average_entropy = (0.0 + expected_layer_2_entropy) / 2
+        self.assertAlmostEqual(stats.effective_entropy, expected_average_entropy, places=5)
 
     def test_run_manifest_generation(self):
         """Ensures the top-level manifest generates valid UUIDs and timestamps."""
