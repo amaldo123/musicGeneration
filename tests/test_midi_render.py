@@ -43,7 +43,9 @@ class TestMidiRender(unittest.TestCase):
         self.assertEqual(len(note_on_events), 2)
         self.assertEqual(note_on_events[0].note, 60)
         self.assertEqual(note_on_events[1].note, 62)
-        self.assertEqual(len(pitchwheel_events), 0)
+        self.assertEqual(len(pitchwheel_events), 2)
+        self.assertEqual(pitchwheel_events[0].pitch, 0)
+        self.assertEqual(pitchwheel_events[1].pitch, 0)
 
     def test_mpe_19_edo_rendering_and_channel_allocation(self):
         """Tests microtonal pitch bends and MPE channel allocation for overlapping notes."""

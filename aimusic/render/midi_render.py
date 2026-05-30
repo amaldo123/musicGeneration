@@ -67,8 +67,7 @@ def render_midi(
         
         events.append((end_tick, 0, 'note_off', midi_note, 0, channel))
         
-        if pitch_bend != 0:
-            events.append((start_tick, 1, 'pitchwheel', pitch_bend, 0, channel))
+        events.append((start_tick, 1, 'pitchwheel', pitch_bend, 0, channel))
             
         if note.timbre is not None:
             events.append((start_tick, 2, 'control_change', 74, note.timbre, channel))
