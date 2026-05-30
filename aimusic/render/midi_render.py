@@ -60,6 +60,16 @@ def render_midi(
 
     events: List[Tuple[int, int, str, int, int, int]] = []
     
+    # Set Pitch Bend Range via RPN for each channel (except master)
+    pb_range = edo.config.pitch_bend_range
+    unique_channels = set(ch for _, ch in allocated_notes)
+    
+    for ch in unique_channels:
+        events.append((0, -4, 'control_change', 101, 0, ch))        # RPN MSB
+        events.append((0, -3, 'control_change', 100, 0, ch))        # RPN LSB (Pitch Bend Sensitivity)
+        events.append((0, -2, 'control_change', 6, pb_range, ch))   # Data MSB (Semitones)
+        events.append((0, -1, 'control_change', 38, 0, ch))         # Data LSB (Cents)
+    
     for note, channel in allocated_notes:
         midi_note, pitch_bend = edo.to_midi(note.pitch_height)
         start_tick = int(note.start_time * ticks_per_beat)
@@ -67,6 +77,7 @@ def render_midi(
         
         events.append((end_tick, 0, 'note_off', midi_note, 0, channel))
         
+        # Explicit pitchwheel reset to clear stale MPE detunes
         events.append((start_tick, 1, 'pitchwheel', pitch_bend, 0, channel))
             
         if note.timbre is not None:

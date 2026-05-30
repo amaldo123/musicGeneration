@@ -93,14 +93,13 @@ class TestMidiRender(unittest.TestCase):
         
         mid = mido.MidiFile(self.output_path)
         
-        # Extract events
-        cc_events = [msg for msg in mid.tracks[0] if msg.type == 'control_change']
+        # Filter specifically for CC 74 rather than grabbing all control changes
+        timbre_events = [msg for msg in mid.tracks[0] if msg.type == 'control_change' and msg.control == 74]
         at_events = [msg for msg in mid.tracks[0] if msg.type == 'aftertouch']
         
         # Verify Timbre (CC74)
-        self.assertEqual(len(cc_events), 1)
-        self.assertEqual(cc_events[0].control, 74)
-        self.assertEqual(cc_events[0].value, 85)
+        self.assertEqual(len(timbre_events), 1)
+        self.assertEqual(timbre_events[0].value, 85)
         
         # Verify Channel Pressure
         self.assertEqual(len(at_events), 1)
