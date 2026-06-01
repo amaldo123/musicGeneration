@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from math import isfinite
 from pathlib import Path
-from typing import Optional, Protocol, Sequence, Tuple, runtime_checkable
+from typing import Optional, Protocol, Sequence, Tuple, cast, runtime_checkable
 
 from aimusic.core.config import (
     NeuralPriorConfig,
@@ -288,6 +288,8 @@ class PriorContext:
         object.__setattr__(self, "future_hint_tokens", future_hint_tokens)
 
     def to_dict(self) -> dict[str, object]:
+        assert self.history_tokens is not None
+        assert self.future_hint_tokens is not None
         return {
             "history_length": len(self.history),
             "future_hint_length": len(self.future_hints),
@@ -363,6 +365,8 @@ class TokenizedPriorQuery:
             raise TypeError("factorization_mode must be a PriorFactorization value.")
 
         context = query.context or PriorContext()
+        assert context.history_tokens is not None
+        assert context.future_hint_tokens is not None
         return cls(
             prev_event=StructuralEventTokens.from_state(query.prev_state),
             next_event=StructuralEventTokens.from_state(query.next_state),
@@ -475,18 +479,18 @@ class NeuralPriorManifest:
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> "NeuralPriorManifest":
         return cls(
-            manifest_version=int(data.get("manifest_version", 1)),
+            manifest_version=int(cast(int, data.get("manifest_version", 1))),
             model_family=str(data.get("model_family", "external_neural_prior")),
             model_version=str(data.get("model_version", "placeholder-v1")),
             factorization_mode=PriorFactorization(
                 data.get("factorization_mode", PriorFactorization.FACTORIZED.value)
             ),
-            token_streams=tuple(data.get("token_streams", STRUCTURAL_STREAM_NAMES)),
+            token_streams=tuple(cast(Sequence[str], data.get("token_streams", STRUCTURAL_STREAM_NAMES))),
             checkpoint_path=data.get("checkpoint_path"),  # type: ignore[arg-type]
             tokenizer_path=data.get("tokenizer_path"),  # type: ignore[arg-type]
             supports_batch_scoring=bool(data.get("supports_batch_scoring", True)),
             expected_edo=data.get("expected_edo"),  # type: ignore[arg-type]
-            metadata=tuple(tuple(item) for item in data.get("metadata", ())),  # type: ignore[arg-type]
+            metadata=cast(MetadataPairs, tuple(tuple(item) for item in cast(Sequence[Tuple[str, str]], data.get("metadata", ())))),
         )
 
 
@@ -573,6 +577,7 @@ class NeuralPrior:
             raise TypeError("model must satisfy the NeuralPriorModel protocol.")
 
     def _score_placeholder(self, query: TokenizedPriorQuery) -> float:
+        assert self.manifest is not None
         score = float(self.config.default_logp)
         if self.config.placeholder_mode is PlaceholderPriorMode.NEUTRAL:
             return score
@@ -627,10 +632,12 @@ class NeuralPrior:
         t: int,
         context: Optional[PriorContext] = None,
     ) -> float:
+        assert self.manifest is not None
         query = PriorQuery(prev_state=prev_state, next_state=next_state, time_index=t, context=context)
         return self._score_tokenized_query(query.tokenize(self.manifest.factorization_mode))
 
     def logp_next_batch(self, queries: Sequence[PriorQuery]) -> Tuple[float, ...]:
+        assert self.manifest is not None
         query_items = tuple(queries)
         if any(not isinstance(query, PriorQuery) for query in query_items):
             raise TypeError("queries must contain only PriorQuery instances.")
@@ -707,7 +714,7 @@ def calculate_transition_log_weights(
     data_scores = prior_logps(prior, query_items)
 
     if windows is None:
-        window_items = (None,) * len(query_items)
+        window_items: tuple[TransitionWindow | None, ...] = (None,) * len(query_items)
     else:
         window_items = tuple(windows)
         if len(window_items) != len(query_items):
