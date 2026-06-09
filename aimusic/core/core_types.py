@@ -191,6 +191,18 @@ class NoteEvent:
             "track": self.track,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "NoteEvent":
+        """Deserialize a note event from a mapping produced by to_dict()."""
+        return cls(
+            ton=int(data["ton"]),
+            toff=int(data["toff"]),
+            h=int(data["h"]),
+            v=float(data["v"]),
+            e=tuple(float(value) for value in data.get("e", ())),
+            track=str(data.get("track", "default")),
+        )
+
     def pretty(self) -> str:
         """Return a compact, readable note-event summary."""
         return (
@@ -242,6 +254,18 @@ class Score:
             "track_event_counts": self.track_event_counts(),
             "note_events": [event.to_dict() for event in self.note_events],
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "Score":
+        """Deserialize a score from a mapping produced by to_dict()."""
+        raw_events = data.get("note_events", ())
+        if not isinstance(raw_events, (list, tuple)):
+            raise TypeError("note_events must be a list or tuple of serialized note events.")
+        return cls(
+            note_events=tuple(NoteEvent.from_dict(event) for event in raw_events),
+            ticks_per_beat=int(data.get("ticks_per_beat", 480)),
+            tempo_bpm=float(data.get("tempo_bpm", 120.0)),
+        )
 
     def pretty(self, *, max_events: int = 3) -> str:
         """Return a concise score summary with an event preview."""

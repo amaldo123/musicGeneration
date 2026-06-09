@@ -4,8 +4,14 @@ import unittest
 import mido
 
 from aimusic.core.config import EDOConfig, MicrotonalRendering
+from aimusic.core.core_types import NoteEvent, Score
 from aimusic.theory.edo import EDO
-from aimusic.render.midi_render import SymbolicNote, render_midi, summarize_midi
+from aimusic.render.midi_render import (
+    SymbolicNote,
+    TrackInstrumentConfig,
+    render_midi,
+    summarize_midi,
+)
 
 class TestMidiRender(unittest.TestCase):
     def setUp(self):
@@ -138,5 +144,118 @@ class TestMidiRender(unittest.TestCase):
             render_midi(notes, self.edo_12, self.output_path)
             
         self.assertIn("MPE polyphony limit exceeded", str(context.exception))
+
+    def test_score_renders_as_multitrack_midi(self):
+        score = Score(
+            note_events=(
+                NoteEvent(ton=0, toff=480, h=36, v=0.7, e=(0.1,), track="bass"),
+                NoteEvent(ton=0, toff=240, h=60, v=0.9, e=(0.8,), track="lead"),
+                NoteEvent(ton=240, toff=480, h=64, v=0.9, e=(0.6,), track="lead"),
+            ),
+            ticks_per_beat=480,
+            tempo_bpm=96.0,
+        )
+
+        render_midi(score, self.edo_12, self.output_path)
+
+        mid = mido.MidiFile(self.output_path)
+        track_names = [
+            next((msg.name for msg in track if msg.type == "track_name"), None)
+            for track in mid.tracks
+        ]
+
+        self.assertEqual(track_names, ["Conductor", "bass", "lead"])
+        self.assertEqual(mid.ticks_per_beat, 480)
+        tempo_event = next(msg for msg in mid.tracks[0] if msg.type == "set_tempo")
+        self.assertEqual(tempo_event.tempo, mido.bpm2tempo(96.0))
+
+        bass_program = next(msg for msg in mid.tracks[1] if msg.type == "program_change")
+        lead_program = next(msg for msg in mid.tracks[2] if msg.type == "program_change")
+        self.assertEqual(bass_program.program, 33)
+        self.assertEqual(lead_program.program, 81)
+
+        bass_notes = [msg for msg in mid.tracks[1] if msg.type == "note_on" and msg.velocity > 0]
+        lead_notes = [msg for msg in mid.tracks[2] if msg.type == "note_on" and msg.velocity > 0]
+        self.assertEqual(len(bass_notes), 1)
+        self.assertEqual(len(lead_notes), 2)
+
+    def test_score_render_uses_all_tracks_in_summary(self):
+        score = Score(
+            note_events=(
+                NoteEvent(ton=0, toff=480, h=36, v=0.7, track="bass"),
+                NoteEvent(ton=0, toff=480, h=60, v=0.9, track="lead"),
+            ),
+            ticks_per_beat=480,
+            tempo_bpm=120.0,
+        )
+
+        render_midi(score, self.edo_12, self.output_path)
+        summary = summarize_midi(self.output_path)
+
+        self.assertEqual(summary.total_notes, 2)
+        self.assertEqual(len(summary.unique_channels), 2)
+
+    def test_score_renders_drums_on_gm_percussion_channel(self):
+        score = Score(
+            note_events=(
+                NoteEvent(ton=0, toff=120, h=36, v=0.7, track="drums"),
+                NoteEvent(ton=120, toff=240, h=38, v=0.7, track="drums"),
+                NoteEvent(ton=0, toff=480, h=48, v=0.8, track="bass"),
+            ),
+            ticks_per_beat=480,
+            tempo_bpm=120.0,
+        )
+
+        render_midi(score, self.edo_12, self.output_path)
+
+        mid = mido.MidiFile(self.output_path)
+        drum_track = next(
+            track
+            for track in mid.tracks
+            if any(msg.type == "track_name" and msg.name == "drums" for msg in track)
+        )
+        drum_note_ons = [msg for msg in drum_track if msg.type == "note_on" and msg.velocity > 0]
+
+        self.assertEqual(len(drum_note_ons), 2)
+        self.assertTrue(all(msg.channel == 9 for msg in drum_note_ons))
+        self.assertFalse(any(msg.type == "program_change" for msg in drum_track))
+
+    def test_score_render_accepts_track_instrument_overrides(self):
+        score = Score(
+            note_events=(
+                NoteEvent(ton=0, toff=480, h=60, v=0.8, track="lead"),
+                NoteEvent(ton=0, toff=120, h=42, v=0.7, track="kit"),
+            ),
+            ticks_per_beat=480,
+            tempo_bpm=120.0,
+        )
+
+        render_midi(
+            score,
+            self.edo_12,
+            self.output_path,
+            track_instruments={
+                "lead": TrackInstrumentConfig(program=88),
+                "kit": TrackInstrumentConfig(is_drum=True),
+            },
+        )
+
+        mid = mido.MidiFile(self.output_path)
+        lead_track = next(
+            track
+            for track in mid.tracks
+            if any(msg.type == "track_name" and msg.name == "lead" for msg in track)
+        )
+        kit_track = next(
+            track
+            for track in mid.tracks
+            if any(msg.type == "track_name" and msg.name == "kit" for msg in track)
+        )
+
+        lead_program = next(msg for msg in lead_track if msg.type == "program_change")
+        kit_note_on = next(msg for msg in kit_track if msg.type == "note_on" and msg.velocity > 0)
+        self.assertEqual(lead_program.program, 88)
+        self.assertEqual(kit_note_on.channel, 9)
+        self.assertFalse(any(msg.type == "program_change" for msg in kit_track))
 if __name__ == "__main__":
     unittest.main()
