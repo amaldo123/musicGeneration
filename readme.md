@@ -151,7 +151,92 @@ This verifies that:
 
 ---
 
-## 5. Conceptual Pipeline
+## 5. CLI Workflow
+
+The current CLI lives at `aimusic.app.cli` and supports three artifact-oriented commands:
+
+- `generate`: run the current Method A pipeline, decode a `BeatState` path into a multi-track `Score`, export multitrack MIDI, and write a run manifest.
+- `export`: render an existing serialized `Score` JSON file to multitrack MIDI.
+- `inspect`: print a compact report from a saved run manifest.
+
+### 5.1 Generate a New Score
+
+This command runs the current implementation end to end and writes three files into the output directory:
+
+- `*_score.json`
+- `*.mid`
+- `*_manifest.json`
+
+Basic example:
+
+```bash
+python3 -m aimusic.app.cli generate \
+  --seed 11 \
+  --beats 8 \
+  --meter 4/4 \
+  --groove-family straight \
+  --tempo-bpm 120 \
+  --out ./outputs
+```
+
+Example with instrument overrides:
+
+```bash
+python3 -m aimusic.app.cli generate \
+  --beats 8 \
+  --meter 4/4 \
+  --groove-family straight \
+  --track-program bass=34 \
+  --track-program comping=5 \
+  --track-program lead=88 \
+  --drum-track drums \
+  --out ./outputs
+```
+
+Useful flags:
+
+- `--sample-path` switches from MAP extraction to sampled bridge-path extraction.
+- `--drum-density`, `--bass-density`, `--comping-density`, and `--lead-density` control decode density.
+- `--edo`, `--pitch-bend-range`, and `--rendering-method` control MIDI rendering behavior.
+- `--track-program track=program` overrides the General MIDI program for a symbolic track.
+- `--drum-track track` forces a symbolic track onto the percussion channel.
+
+Default symbolic-track mappings:
+
+- `bass -> 33`
+- `comping -> 4`
+- `lead -> 81`
+- `drums -> percussion channel`
+
+### 5.2 Export a Saved Score to MIDI
+
+If you already have a serialized `Score` JSON artifact, you can render it directly:
+
+```bash
+python3 -m aimusic.app.cli export ./outputs/example_score.json --out ./outputs/example.mid
+```
+
+Export with instrument overrides:
+
+```bash
+python3 -m aimusic.app.cli export ./outputs/example_score.json \
+  --out ./outputs/example.mid \
+  --track-program lead=81 \
+  --track-program bass=38 \
+  --drum-track drums
+```
+
+For score-based export, the CLI defaults to `--base-tuning 0` so decoded score pitch heights map correctly into MIDI note space.
+
+### 5.3 Inspect a Run Manifest
+
+```bash
+python3 -m aimusic.app.cli inspect ./outputs/example_manifest.json
+```
+
+---
+
+## 6. Conceptual Pipeline
 
 The system is organized as a layered generation pipeline.
 
@@ -169,7 +254,7 @@ Configs + vocabularies + priors
 
 ---
 
-## 6. Core Representations
+## 7. Core Representations
 
 ### 6.1 EDO Configuration
 
@@ -226,7 +311,7 @@ Where:
 - `track` identifies the musical track or instrument layer.
 
 ---
-## 7. Repository Organization
+## 8. Repository Organization
 
 The project is organized around the main `aimusic/` package, with tests kept separately under `tests/`. The codebase is grouped by responsibility so that core data structures, theory utilities, scoring logic, planning logic, rendering, and application entrypoints remain independent and easier to maintain.
 
