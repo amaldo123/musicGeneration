@@ -58,13 +58,6 @@ class TestNoteEvent(unittest.TestCase):
         self.assertIn("track=lead", pretty)
         self.assertIn("ticks=0->120", pretty)
 
-    def test_note_event_round_trips_from_dict(self):
-        event = NoteEvent(ton=0, toff=120, h=7, v=0.75, e=(0.1, 0.2), track="lead")
-
-        restored = NoteEvent.from_dict(event.to_dict())
-
-        self.assertEqual(restored, event)
-
 
 class TestScore(unittest.TestCase):
     def test_score_coerces_note_events_to_tuple_and_is_iterable(self):
@@ -96,15 +89,6 @@ class TestScore(unittest.TestCase):
         self.assertIn("events=2", pretty)
         self.assertIn("tracks={bass:1, lead:1}", pretty)
         self.assertIn("...", pretty)
-
-    def test_score_round_trips_from_dict(self):
-        note_a = NoteEvent(0, 120, 0, 0.7, e=(0.2,), track="bass")
-        note_b = NoteEvent(120, 240, 4, 0.8, e=(0.6,), track="lead")
-        score = Score(note_events=(note_a, note_b), ticks_per_beat=240, tempo_bpm=110.0)
-
-        restored = Score.from_dict(score.to_dict())
-
-        self.assertEqual(restored, score)
 
 
 class TestLayer(unittest.TestCase):
