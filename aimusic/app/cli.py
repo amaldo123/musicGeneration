@@ -29,7 +29,7 @@ ROLE_TENSION = {
 
 
 def _json_ready(value: Any) -> Any:
-    if dataclasses.is_dataclass(value):
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return _json_ready(dataclasses.asdict(value))
     if isinstance(value, dict):
         return {str(key): _json_ready(item) for key, item in value.items()}
