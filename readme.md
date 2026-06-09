@@ -134,12 +134,12 @@ This installs the required packages, including dependencies such as `mido` and `
 
 ## 4. Running Tests
 
-The current test suite is exercised through Python's built-in `unittest` runner.
+The project uses `pytest` for the test suite.
 
 To run all tests, execute:
 
 ```bash
-python3 -m unittest
+pytest
 ```
 
 This verifies that:
@@ -151,92 +151,7 @@ This verifies that:
 
 ---
 
-## 5. CLI Workflow
-
-The current CLI lives at `aimusic.app.cli` and supports three artifact-oriented commands:
-
-- `generate`: run the current Method A pipeline, decode a `BeatState` path into a multi-track `Score`, export multitrack MIDI, and write a run manifest.
-- `export`: render an existing serialized `Score` JSON file to multitrack MIDI.
-- `inspect`: print a compact report from a saved run manifest.
-
-### 5.1 Generate a New Score
-
-This command runs the current implementation end to end and writes three files into the output directory:
-
-- `*_score.json`
-- `*.mid`
-- `*_manifest.json`
-
-Example:
-
-```bash
-python3 -m aimusic.app.cli generate \
-  --seed 11 \
-  --beats 8 \
-  --meter 4/4 \
-  --groove-family straight \
-  --tempo-bpm 120 \
-  --out ./outputs
-```
-
-Example with explicit instrument overrides:
-
-```bash
-python3 -m aimusic.app.cli generate \
-  --beats 8 \
-  --meter 4/4 \
-  --groove-family straight \
-  --track-program bass=34 \
-  --track-program comping=5 \
-  --track-program lead=88 \
-  --drum-track drums \
-  --out ./outputs
-```
-
-Useful flags:
-
-- `--sample-path` switches from MAP extraction to sampled bridge-path extraction.
-- `--drum-density`, `--bass-density`, `--comping-density`, and `--lead-density` control decode density.
-- `--edo`, `--pitch-bend-range`, and `--rendering-method` control MIDI rendering behavior.
-- `--track-program track=program` overrides the General MIDI program for a symbolic track.
-- `--drum-track track` forces a symbolic track onto the percussion channel.
-
-By default, score-based MIDI export uses these symbolic-track mappings:
-
-- `bass -> 33`
-- `comping -> 4`
-- `lead -> 81`
-- `drums -> percussion channel`
-
-### 5.2 Export a Saved Score to MIDI
-
-If you already have a serialized `Score` JSON artifact, you can render it directly:
-
-```bash
-python3 -m aimusic.app.cli export ./outputs/example_score.json --out ./outputs/example.mid
-```
-
-You can override instruments during export as well:
-
-```bash
-python3 -m aimusic.app.cli export ./outputs/example_score.json \
-  --out ./outputs/example.mid \
-  --track-program lead=81 \
-  --track-program bass=38 \
-  --drum-track drums
-```
-
-For score-based export, the CLI defaults to `--base-tuning 0` so decoded score pitch heights map correctly into MIDI note space.
-
-### 5.3 Inspect a Run Manifest
-
-```bash
-python3 -m aimusic.app.cli inspect ./outputs/example_manifest.json
-```
-
----
-
-## 6. Conceptual Pipeline
+## 5. Conceptual Pipeline
 
 The system is organized as a layered generation pipeline.
 
@@ -254,7 +169,7 @@ Configs + vocabularies + priors
 
 ---
 
-## 7. Core Representations
+## 6. Core Representations
 
 ### 6.1 EDO Configuration
 
@@ -311,7 +226,7 @@ Where:
 - `track` identifies the musical track or instrument layer.
 
 ---
-## 8. Repository Organization
+## 7. Repository Organization
 
 The project is organized around the main `aimusic/` package, with tests kept separately under `tests/`. The codebase is grouped by responsibility so that core data structures, theory utilities, scoring logic, planning logic, rendering, and application entrypoints remain independent and easier to maintain.
 
@@ -376,33 +291,92 @@ musicGeneration/
 
 ---
 
-## 9. Implementation Checklist
+## 8. Implementation Checklist
 
 The current implementation progress is tracked below.
 
-- [x] Define immutable configs and shared token vocabularies.
-- [x] Implement BeatState-centric GTTM feature energies and tonal helpers.
+- [x] Define configs and token vocabularies, starting with 12-EDO and then extending to 19-EDO.
+- [x] Implement GTTM feature energies and a simple rule-based tonal distance metric.
 - [x] Implement candidate generation and sparse graph building with pruning.
 - [x] Implement the Schrödinger Bridge solver on sparse edges using the NumPy backend.
-- [x] Add the placeholder neural-prior seam and manifest contract.
-- [x] Implement Method A endpoint planning and orchestration.
-- [x] Implement decoder components for drums, bass, comping, and lead.
-- [x] Implement multitrack symbolic `Score` export and multitrack MIDI rendering.
-- [x] Add CLI commands for `generate`, `export`, and `inspect`.
-- [ ] Implement Method B.
-- [ ] Integrate an external neural prior implementation.
-- [ ] Add richer diagnostics and section-wise workflow expansion where needed.
+- [ ] Implement Method A plan, then Method B.
+- [ ] Implement decoder components for drums, bass, comping, and lead.
+- [ ] Implement MIDI rendering.
+  - [x] 12-EDO direct mapping implemented.
+  - [ ] 19-EDO MPE support pending.
+- [ ] Add the placeholder `NeuralPrior` seam and artifact contract.
+- [ ] Integrate the external neural prior implementation when available.
+- [ ] Add section-wise Schrödinger Bridge generation and richer diagnostics.
 
 ---
 
-## 10. Notes for Development
+## 9. Notes for Development
 
 When developing this project, remember to:
 
 - Activate the virtual environment before running commands.
 - Install dependencies from `requirements.txt`.
-- Run tests with `python3 -m unittest` after making changes.
+- Run tests with `pytest` after making changes.
 - Keep new modules responsibility-focused.
 - Avoid introducing circular imports.
 - Preserve deterministic behavior where possible, especially for sampling and MIDI export.
 - Keep EDO logic generic and avoid hard-coding assumptions specific to 12-EDO.
+
+---
+Core algorithms should be written against a small backend interface, starting with NumPy and preserving the possibility of using JAX later.
+
+## 3. Conceptual Pipeline
+
+The system is organized as a layered pipeline. A typical run executes:
+
+1.  `Configs + vocabularies + priors`
+2.  `-> endpoint plan (A or B)`
+3.  `-> build sparse layered graph of BeatState candidates`
+4.  `-> solve Schrodinger bridge on that graph`
+5.  `-> sample or MAP a BeatState trajectory`
+6.  `-> decode BeatState trajectory to multi-track symbolic Score`
+7.  `-> render Score to MIDI`
+
+## 4. Core Representations
+
+-   **EDO Configuration:** Pitch classes are in Z_N, and pitch heights are integers measured in EDO steps.
+-   **Beat-level Structural State (`St`):** A compact, token-based representation of the musical state at a beat: `(meter_id, beat_in_bar, boundary_lvl, key_id, chord_id, role_id, head_id, groove_id)`.
+-   **Score-level Representation (`NoteEvent`):** A tuple representing a single note: `(ton, toff, h, v, e, track)`.
+
+## 13. Repository Organization
+
+The implementation now lives under the `aimusic/` package and is grouped by responsibility:
+
+| Package / Module                     | Responsibility                                               |
+| ------------------------------------ | ------------------------------------------------------------ |
+| `aimusic.core.config`                | Immutable configuration dataclasses.                         |
+| `aimusic.core.core_types`            | Canonical shared types such as `BeatState`, `Layer`, `Edge`, and `Score`. |
+| `aimusic.core.vocab`                 | Token vocabularies for meters, grooves, chords, keys, and roles. |
+| `aimusic.core.rng`                   | Deterministic RNG helpers for pure sampling code.            |
+| `aimusic.theory.edo`                 | EDO pitch math and rendering helpers.                        |
+| `aimusic.theory.tonal`               | Tonal system definition, chord templates, tonal distances.   |
+| `aimusic.scoring.gttm_features`      | Feature functions and weighted energy computation.           |
+| `aimusic.scoring.priors`             | `NullPrior`, placeholder `NeuralPrior`, manifests, and prior scoring helpers. |
+| `aimusic.scoring.rhythm_features`    | Compatibility facade over the GTTM beat-state scoring layer. |
+| `aimusic.planning.candidates`        | Hard gating and candidate proposal functions.                |
+| `aimusic.planning.graph`             | Layer expansion, sparse edge building, pruning.              |
+| `aimusic.planning.plans`             | Endpoint generation, section metadata, and Method A orchestration. |
+| `aimusic.planning.sb`                | Schrödinger bridge solver, bridge extraction, sampling, and MAP path extraction. |
+| `aimusic.decode`                     | BeatState path to multi-track symbolic Score decoding.       |
+| `aimusic.app.main`                   | Application / demo entrypoints.                              |
+
+The test suite lives under `tests/` and imports the packaged modules directly.
+
+## 17. Implementation Checklist (Practical)
+
+A recommended implementation order:
+
+1.  Define configs and token vocabularies (12-EDO first, then 19-EDO).
+2.  Implement GTTM feature energies and tonal distance metric (simple, rule-based).
+3.  Implement candidate generation and sparse graph builder with pruning.
+4.  Implement SB solver on sparse edges (NumPy backend).
+5.  Implement Method A plan, then Method B.
+6.  Implement decoder (drums, bass, comping, lead) and MIDI rendering.
+7.  Add the placeholder `NeuralPrior` seam and artifact contract.
+8.  Integrate the external neural prior implementation when it is available.
+9.  Add section-wise SB and richer diagnostics.
