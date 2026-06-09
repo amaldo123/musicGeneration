@@ -3,7 +3,7 @@ import dataclasses
 import json
 import sys
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 from aimusic.core.diagnostics import (
     RunManifest,
@@ -235,7 +235,7 @@ def handle_export(args: argparse.Namespace) -> None:
     with score_path.open("r", encoding="utf-8") as f:
         data = json.load(f)
 
-    score = Score.from_dict(data)
+    score = cast(Any, Score).from_dict(data)
     edo = _build_edo(args)
     output_path = Path(args.out) if args.out else score_path.with_suffix(".mid")
     output_path.parent.mkdir(parents=True, exist_ok=True)
