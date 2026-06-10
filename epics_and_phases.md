@@ -237,20 +237,20 @@ The major missing pieces are:
 
 **Tasks**
 
-- [ ] Implement 12-EDO direct mapping from pitch heights to MIDI note numbers.
-- [ ] Implement 19-EDO and other N-EDO rendering via MPE-style pitch bends.
-- [ ] Add a rendering path for MTS-style tuning support if practical, or clearly document it as deferred.
-- [ ] Design track-to-channel allocation and channel reuse rules.
-- [ ] Encode per-note expressive information into MIDI-friendly controls where available.
-- [ ] Generate valid `.mid` files with deterministic ordering and metadata.
-- [ ] Add rendering smoke tests and small fixture exports.
-- [ ] Add inspection helpers to summarize rendered note counts, channels, and pitch-bend usage.
+- [x] Implement 12-EDO direct mapping from pitch heights to MIDI note numbers.
+- [x] Implement 19-EDO and other N-EDO rendering via MPE-style pitch bends.
+- [x] Add a rendering path for MTS-style tuning support if practical, or clearly document it as deferred.
+- [x] Design track-to-channel allocation and channel reuse rules.
+- [x] Encode per-note expressive information into MIDI-friendly controls where available.
+- [x] Generate valid `.mid` files with deterministic ordering and metadata.
+- [x] Add rendering smoke tests and small fixture exports.
+- [x] Add inspection helpers to summarize rendered note counts, channels, and pitch-bend usage.
 
 **Definition of done**
 
-- [ ] The system can export playable MIDI from the decoded score.
-- [ ] 12-EDO and 19-EDO runs have separate verified rendering paths.
-- [ ] Rendering stays isolated from structural planning logic.
+- [x] The system can export playable MIDI from the decoded score.
+- [x] 12-EDO and 19-EDO runs have separate verified rendering paths.
+- [x] Rendering stays isolated from structural planning logic.
 
 ### EPIC 9: CLI, Diagnostics, Evaluation, and Reproducibility
 
@@ -260,20 +260,20 @@ The major missing pieces are:
 
 **Tasks**
 
-- [ ] Add a CLI entry point for `generate`, `inspect`, and `export`.
-- [ ] Emit diagnostics for chord timeline, key timeline, groove timeline, boundary sequence, and role sequence.
-- [ ] Compute a tension curve from tonal distances and prolongational role behavior.
-- [ ] Capture SB convergence logs, effective entropy, layer sizes, and prune statistics.
-- [ ] Add seed reporting and run manifests so outputs are reproducible.
-- [ ] Add end-to-end fixtures that produce stable short passages for regression testing.
-- [ ] Define basic evaluation criteria for structural coherence, cadence plausibility, and decode validity.
-- [ ] Document failure modes and fallback behaviors for empty layers, solver instability, and decode dead ends.
+- [x] Add a CLI entry point for `generate`, `inspect`, and `export`.
+- [x] Emit diagnostics for chord timeline, key timeline, groove timeline, boundary sequence, and role sequence.
+- [x] Compute a tension curve from tonal distances and prolongational role behavior.
+- [x] Capture SB convergence logs, effective entropy, layer sizes, and prune statistics.
+- [x] Add seed reporting and run manifests so outputs are reproducible.
+- [x] Add end-to-end fixtures that produce stable short passages for regression testing.
+- [x] Define basic evaluation criteria for structural coherence, cadence plausibility, and decode validity.
+- [x] Document failure modes and fallback behaviors for empty layers, solver instability, and decode dead ends.
 
 **Definition of done**
 
-- [ ] A generation run produces both output files and diagnostics.
-- [ ] Regressions can be caught with short deterministic fixtures.
-- [ ] Users can inspect why a generation succeeded or failed.
+- [x] A generation run produces both output files and diagnostics.
+- [x] Regressions can be caught with short deterministic fixtures.
+- [x] Users can inspect why a generation succeeded or failed.
 
 ### EPIC 10: Long-Form Scaling, Method B, and Hybrid Extensions
 
