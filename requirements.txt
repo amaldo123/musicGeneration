@@ -3,3 +3,4 @@ mypy
 numpy
 mido
 pytest
+gradio
