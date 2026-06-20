@@ -256,7 +256,7 @@ Configs + vocabularies + priors
 
 ## 7. Core Representations
 
-### 6.1 EDO Configuration
+### 7.1 EDO Configuration
 
 Pitch classes are represented in `Z_N`, where `N` is the number of equal divisions of the octave.
 
@@ -267,7 +267,7 @@ Examples:
 - `N = 12` for 12-EDO
 - `N = 19` for 19-EDO
 
-### 6.2 Beat-Level Structural State
+### 7.2 Beat-Level Structural State
 
 The beat-level structural state is represented using `BeatState`.
 
@@ -286,7 +286,7 @@ head_id
 groove_id
 ```
 
-### 6.3 Score-Level Representation
+### 7.3 Score-Level Representation
 
 The score-level representation uses `NoteEvent`.
 
@@ -351,7 +351,7 @@ musicGeneration/
 └── README.md
 ```
 
-| Path | Responsibility |
+| Package / Module  | Responsibility |
 | --- | --- |
 | `aimusic/` | Main Python package for the symbolic music generation system. |
 | `aimusic.app.main` | Application and demo entrypoint for running generation workflows. |
@@ -376,7 +376,7 @@ musicGeneration/
 
 ---
 
-## 8. Implementation Checklist
+## 9. Implementation Checklist
 
 The current implementation progress is tracked below.
 
@@ -395,7 +395,7 @@ The current implementation progress is tracked below.
 
 ---
 
-## 9. Notes for Development
+## 10. Notes for Development
 
 When developing this project, remember to:
 
