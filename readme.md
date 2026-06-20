@@ -354,10 +354,12 @@ musicGeneration/
 | Package / Module  | Responsibility |
 | --- | --- |
 | `aimusic/` | Main Python package for the symbolic music generation system. |
+| `aimusic.app.cli` | CLI entrypoint with `generate`, `export`, and `inspect` subcommands. |
 | `aimusic.app.main` | Application and demo entrypoint for running generation workflows. |
 | `aimusic.core.config` | Immutable configuration dataclasses for generation, EDO settings, scoring, and planning. |
 | `aimusic.core.core_types` | Canonical shared data types such as `BeatState`, `Layer`, `Edge`, `Score`, and related structures. |
 | `aimusic.core.vocab` | Token vocabularies for meters, grooves, chords, keys, roles, and other symbolic categories. |
+| `aimusic.core.diagnostics` | Run manifests, SB diagnostics, tension curves, and structural diagnostics. |
 | `aimusic.core.rng` | Deterministic random-number-generation helpers used by sampling and planning code. |
 | `aimusic.theory.edo` | EDO pitch math, pitch-class operations, and microtonal helper functions. |
 | `aimusic.theory.tonal` | Tonal-system definitions, chord templates, tonal distances, and harmonic utilities. |
@@ -368,6 +370,7 @@ musicGeneration/
 | `aimusic.planning.graph` | Sparse layered-graph construction, layer expansion, edge building, and pruning. |
 | `aimusic.planning.plans` | Endpoint generation, section metadata, and orchestration for Method A and future Method B workflows. |
 | `aimusic.planning.sb` | Schrödinger Bridge solver, bridge extraction, trajectory sampling, and MAP path extraction. |
+| `aimusic.decode` | BeatState path to multi-track symbolic Score decoding (drums, bass, comping, lead). |
 | `aimusic.render` | Rendering package for converting symbolic scores into output formats such as MIDI. |
 | `aimusic.render.midi_render` | MIDI generation and deterministic MIDI file export, kept separate from planning logic. |
 | `tests/` | Test suite for validating core math, planning, scoring, routing, and deterministic MIDI behavior. |
