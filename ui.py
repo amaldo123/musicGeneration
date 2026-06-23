@@ -825,7 +825,7 @@ def generate_music(
         str(artifacts.score_path),
         str(artifacts.manifest_path),
         analysis,
-        f"Generated run `{artifacts.run_id}` and rendered WAV with `{converter}`.",
+        f"Done — {artifacts.midi_path.name} via {converter}",
     )
 
 
@@ -835,7 +835,15 @@ def _download_component(label: str) -> gr.components.Component:
     return gr.File(label=label, interactive=False)
 
 
-with gr.Blocks(title="MIDI Generator", fill_height=True) as demo:
+css = """
+    .block { padding: 2px 0 !important; }
+    .form { gap: 2px !important; }
+    .wrap { gap: 2px !important; }
+    label { margin-bottom: 0 !important; }
+    .gr-box { border: 1px solid #2b3340 !important; border-radius: 6px !important; }
+"""
+
+with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
     with gr.Row(equal_height=True):
         with gr.Column(scale=1):
             seed = gr.Number(label="seed", value=11, precision=0)
@@ -862,7 +870,7 @@ with gr.Blocks(title="MIDI Generator", fill_height=True) as demo:
             )
 
         with gr.Column(scale=2):
-            with gr.Row():
+            with gr.Row(equal_height=True):
                 with gr.Column(scale=1):
                     bass_program = gr.Number(label="track-program bass", value=34, precision=0)
                     comping_program = gr.Number(label="track-program comping", value=5, precision=0)
