@@ -836,8 +836,7 @@ def _download_component(label: str) -> gr.components.Component:
 
 
 with gr.Blocks(title="MIDI Generator", fill_height=True) as demo:
-    gr.Markdown("### MIDI Generator")
-    with gr.Row(equal_height=False):
+    with gr.Row(equal_height=True):
         with gr.Column(scale=1):
             seed = gr.Number(label="seed", value=11, precision=0)
             beats = gr.Number(label="beats", value=8, precision=0)
@@ -854,50 +853,50 @@ with gr.Blocks(title="MIDI Generator", fill_height=True) as demo:
                 value="straight",
             )
             tempo_bpm = gr.Number(label="tempo-bpm", value=120)
-            drum_density = gr.Slider(
-                label="drum-density",
-                minimum=0,
-                maximum=1,
-                step=0.01,
-                value=0.75,
-            )
-            bass_density = gr.Slider(
-                label="bass-density",
-                minimum=0,
-                maximum=1,
-                step=0.01,
-                value=0.60,
-            )
-            comping_density = gr.Slider(
-                label="comping-density",
-                minimum=0,
-                maximum=1,
-                step=0.01,
-                value=0.55,
-            )
-            lead_density = gr.Slider(
-                label="lead-density",
-                minimum=0,
-                maximum=1,
-                step=0.01,
-                value=0.45,
+            sample_path = gr.Checkbox(label="sample-path", value=False)
+            pitch_bend_range = gr.Number(label="pitch-bend-range", value=2, precision=0)
+            rendering_method = gr.Dropdown(
+                label="rendering-method",
+                choices=[method.name for method in MicrotonalRendering],
+                value=MicrotonalRendering.MPE.name,
             )
 
         with gr.Column(scale=2):
             with gr.Row():
-                sample_path = gr.Checkbox(label="sample-path", value=False)
-                pitch_bend_range = gr.Number(label="pitch-bend-range", value=2, precision=0)
-                rendering_method = gr.Dropdown(
-                    label="rendering-method",
-                    choices=[method.name for method in MicrotonalRendering],
-                    value=MicrotonalRendering.MPE.name,
-                    scale=2,
-                )
-            with gr.Row():
-                bass_program = gr.Number(label="track-program bass", value=34, precision=0)
-                comping_program = gr.Number(label="track-program comping", value=5, precision=0)
-                lead_program = gr.Number(label="track-program lead", value=88, precision=0)
-                drum_track = gr.Textbox(label="drum-track", value="drums")
+                with gr.Column(scale=1):
+                    bass_program = gr.Number(label="track-program bass", value=34, precision=0)
+                    comping_program = gr.Number(label="track-program comping", value=5, precision=0)
+                    lead_program = gr.Number(label="track-program lead", value=88, precision=0)
+                    drum_track = gr.Textbox(label="drum-track", value="drums")
+                with gr.Column(scale=2):
+                    drum_density = gr.Slider(
+                        label="drum-density",
+                        minimum=0,
+                        maximum=1,
+                        step=0.01,
+                        value=0.75,
+                    )
+                    bass_density = gr.Slider(
+                        label="bass-density",
+                        minimum=0,
+                        maximum=1,
+                        step=0.01,
+                        value=0.60,
+                    )
+                    comping_density = gr.Slider(
+                        label="comping-density",
+                        minimum=0,
+                        maximum=1,
+                        step=0.01,
+                        value=0.55,
+                    )
+                    lead_density = gr.Slider(
+                        label="lead-density",
+                        minimum=0,
+                        maximum=1,
+                        step=0.01,
+                        value=0.45,
+                    )
             generate_button = gr.Button("Generate", variant="primary")
             status = gr.Markdown()
             dashboard = gr.HTML()
