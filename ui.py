@@ -836,12 +836,13 @@ def _download_component(label: str) -> gr.components.Component:
 
 
 css = """
-    .block { padding: 1px 8px !important; }
-    .form { gap: 1px !important; }
-    .wrap { gap: 1px !important; padding: 0 !important; }
-    label { margin-bottom: 0 !important; font-size: 12px !important; }
-    .density-box { border: 1px solid #374151 !important; border-radius: 6px !important; padding: 4px 6px !important; }
-    .density-box input[type=range] { height: 4px !important; }
+    .block { padding: 0 8px !important; }
+    .form { gap: 2px !important; }
+    .wrap { gap: 2px !important; padding: 0 !important; }
+    label { margin-bottom: 0 !important; font-size: 11px !important; }
+    .density-box { border: 1px solid #374151 !important; border-radius: 6px !important; padding: 2px 6px !important; }
+    .density-box input[type=range] { height: 3px !important; }
+    input[type=number] { padding: 1px 4px !important; }
 """
 
 with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
