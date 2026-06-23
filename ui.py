@@ -714,7 +714,7 @@ def _build_playback_dashboard(
     )
 
 
-def _score_analysis(score_path: Path, manifest_path: Path) -> str:
+def _score_summary(score_path: Path, manifest_path: Path) -> str:
     score_data = _load_json(score_path)
     manifest_data = _load_json(manifest_path)
 
@@ -727,18 +727,24 @@ def _score_analysis(score_path: Path, manifest_path: Path) -> str:
     duration_seconds = duration_beats * 60.0 / tempo_bpm
     meter = manifest_data.get("config", {}).get("meter", "unknown")
 
-    track_lines = "\n".join(
-        f"| {track} | {count} |" for track, count in sorted(track_counts.items())
-    )
-    if not track_lines:
-        track_lines = "| none | 0 |"
-
     return (
         "### Analysis\n"
         f"- Tempo: {tempo_bpm:g} BPM\n"
         f"- Meter: {meter}\n"
         f"- Track count: {len(track_counts)}\n"
-        f"- Duration: {duration_seconds:.2f}s ({duration_beats:.2f} beats)\n\n"
+        f"- Duration: {duration_seconds:.2f}s ({duration_beats:.2f} beats)"
+    )
+
+
+def _score_table(score_path: Path, manifest_path: Path) -> str:
+    score_data = _load_json(score_path)
+    track_counts = score_data.get("track_event_counts", {})
+    track_lines = "\n".join(
+        f"| {track} | {count} |" for track, count in sorted(track_counts.items())
+    )
+    if not track_lines:
+        track_lines = "| none | 0 |"
+    return (
         "| Track | Notes |\n"
         "| --- | ---: |\n"
         f"{track_lines}"
@@ -769,7 +775,7 @@ def generate_music(
     comping_program: Any,
     lead_program: Any,
     drum_track: str,
-) -> tuple[str, Any, Any, Any, str, str]:
+) -> tuple[str, Any, Any, Any, str, str, str]:
     try:
         params = _normalize_inputs(
             seed,
@@ -791,14 +797,16 @@ def generate_music(
             drum_track,
         )
         artifacts = _generate_artifacts(params)
-        analysis = _score_analysis(artifacts.score_path, artifacts.manifest_path)
+        summary = _score_summary(artifacts.score_path, artifacts.manifest_path)
+        table = _score_table(artifacts.score_path, artifacts.manifest_path)
     except Exception:
         return (
             "",
-            None,
-            None,
-            None,
-            "",
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(value="", visible=False),
+            gr.update(value="", visible=False),
             _error_markdown(traceback.format_exc(), include_traceback=True),
         )
 
@@ -812,19 +820,21 @@ def generate_music(
     except MidiAudioConversionError as exc:
         return (
             "",
-            str(artifacts.midi_path),
-            str(artifacts.score_path),
-            str(artifacts.manifest_path),
-            analysis,
+            gr.update(value=str(artifacts.midi_path), visible=True),
+            gr.update(value=str(artifacts.score_path), visible=True),
+            gr.update(value=str(artifacts.manifest_path), visible=True),
+            gr.update(value=summary, visible=True),
+            gr.update(value=table, visible=True),
             _error_markdown(str(exc)),
         )
 
     return (
         dashboard,
-        str(artifacts.midi_path),
-        str(artifacts.score_path),
-        str(artifacts.manifest_path),
-        analysis,
+        gr.update(value=str(artifacts.midi_path), visible=True),
+        gr.update(value=str(artifacts.score_path), visible=True),
+        gr.update(value=str(artifacts.manifest_path), visible=True),
+        gr.update(value=summary, visible=True),
+        gr.update(value=table, visible=True),
         "",
     )
 
@@ -912,13 +922,18 @@ with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
                     )
                     sample_path = gr.Checkbox(label="Choose Sample Path", value=False)
             generate_button = gr.Button("Generate", variant="primary")
-            status = gr.Markdown()
             dashboard = gr.HTML()
-            with gr.Row():
-                midi_download = _download_component("Download MIDI")
-                score_download = _download_component("Download score JSON")
-                manifest_download = _download_component("Download manifest JSON")
-            analysis = gr.Markdown()
+            status = gr.Markdown()
+            with gr.Row(equal_height=True):
+                summary = gr.Markdown(visible=False, scale=1)
+                table = gr.Markdown(visible=False, scale=1)
+                with gr.Column(scale=1, min_width=160):
+                    midi_download = _download_component("Download MIDI")
+                    score_download = _download_component("Download score JSON")
+                    manifest_download = _download_component("Download manifest JSON")
+                    midi_download.visible = False
+                    score_download.visible = False
+                    manifest_download.visible = False
 
     generate_button.click(
         fn=generate_music,
@@ -946,7 +961,8 @@ with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
             midi_download,
             score_download,
             manifest_download,
-            analysis,
+            summary,
+            table,
             status,
         ],
         show_progress="full",
