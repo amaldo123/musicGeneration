@@ -825,7 +825,7 @@ def generate_music(
         str(artifacts.score_path),
         str(artifacts.manifest_path),
         analysis,
-        f"Done — {artifacts.midi_path.name} via {converter}",
+        f"Done! Music generated: {artifacts.midi_path.name} via {converter}",
     )
 
 
@@ -840,12 +840,12 @@ css = """
     .form { gap: 2px !important; }
     .wrap { gap: 2px !important; }
     label { margin-bottom: 0 !important; }
-    .gr-box { border: 1px solid #2b3340 !important; border-radius: 6px !important; }
+    .gr-box { border: 1px solid #374151 !important; border-radius: 6px !important; }
 """
 
 with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
     with gr.Row(equal_height=True):
-        with gr.Column(scale=1):
+        with gr.Column(scale=0):
             seed = gr.Number(label="seed", value=11, precision=0)
             beats = gr.Number(label="beats", value=8, precision=0)
             edo = gr.Number(label="edo", value=12, precision=0)
