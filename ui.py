@@ -583,7 +583,7 @@ def _build_playback_dashboard(
     }}
     .grid {{
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: 1fr 1fr 2fr;
       gap: 8px;
     }}
     .cell {{
@@ -856,6 +856,7 @@ css = """
 """
 
 with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
+    gr.Markdown("## MIDI Generator <small style='font-weight:700;color:#9aa4b2;font-size:14px'>  | write configs and click 'generate'</small>")
     with gr.Row(equal_height=False):
         with gr.Column(scale=0):
             seed = gr.Number(label="seed", value=11, precision=0)
