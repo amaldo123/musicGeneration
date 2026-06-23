@@ -803,7 +803,7 @@ def generate_music(
         )
 
     try:
-        converter = _convert_midi_to_wav(artifacts.midi_path, artifacts.wav_path)
+        _ = _convert_midi_to_wav(artifacts.midi_path, artifacts.wav_path)
         dashboard = _build_playback_dashboard(
             artifacts.wav_path,
             artifacts.score_path,
@@ -825,7 +825,7 @@ def generate_music(
         str(artifacts.score_path),
         str(artifacts.manifest_path),
         analysis,
-        f"Done! Music generated: {artifacts.midi_path.name} via {converter}",
+        "",
     )
 
 
@@ -836,15 +836,16 @@ def _download_component(label: str) -> gr.components.Component:
 
 
 css = """
-    .block { padding: 2px 0 !important; }
-    .form { gap: 2px !important; }
-    .wrap { gap: 2px !important; }
-    label { margin-bottom: 0 !important; }
-    .gr-box { border: 1px solid #374151 !important; border-radius: 6px !important; }
+    .block { padding: 1px 8px !important; }
+    .form { gap: 1px !important; }
+    .wrap { gap: 1px !important; padding: 0 !important; }
+    label { margin-bottom: 0 !important; font-size: 12px !important; }
+    .density-box { border: 1px solid #374151 !important; border-radius: 6px !important; padding: 4px 6px !important; }
+    .density-box input[type=range] { height: 4px !important; }
 """
 
 with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
-    with gr.Row(equal_height=True):
+    with gr.Row(equal_height=False):
         with gr.Column(scale=0):
             seed = gr.Number(label="seed", value=11, precision=0)
             beats = gr.Number(label="beats", value=8, precision=0)
@@ -861,7 +862,6 @@ with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
                 value="straight",
             )
             tempo_bpm = gr.Number(label="tempo-bpm", value=120)
-            sample_path = gr.Checkbox(label="sample-path", value=False)
             pitch_bend_range = gr.Number(label="pitch-bend-range", value=2, precision=0)
             rendering_method = gr.Dropdown(
                 label="rendering-method",
@@ -883,6 +883,7 @@ with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
                         maximum=1,
                         step=0.01,
                         value=0.75,
+                        elem_classes="density-box",
                     )
                     bass_density = gr.Slider(
                         label="bass-density",
@@ -890,6 +891,7 @@ with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
                         maximum=1,
                         step=0.01,
                         value=0.60,
+                        elem_classes="density-box",
                     )
                     comping_density = gr.Slider(
                         label="comping-density",
@@ -897,6 +899,7 @@ with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
                         maximum=1,
                         step=0.01,
                         value=0.55,
+                        elem_classes="density-box",
                     )
                     lead_density = gr.Slider(
                         label="lead-density",
@@ -904,7 +907,9 @@ with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
                         maximum=1,
                         step=0.01,
                         value=0.45,
+                        elem_classes="density-box",
                     )
+                    sample_path = gr.Checkbox(label="Choose Sample Path", value=False)
             generate_button = gr.Button("Generate", variant="primary")
             status = gr.Markdown()
             dashboard = gr.HTML()
@@ -945,7 +950,6 @@ with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
         ],
         show_progress="full",
     )
-
 
 if __name__ == "__main__":
     demo.queue()
