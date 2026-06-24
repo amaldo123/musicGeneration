@@ -377,10 +377,12 @@ def _groove_anchor_ids(style_config: StyleConfig, vocabularies: Vocabularies) ->
     return tuple(dict.fromkeys(ids[: max(1, min(4, len(ids)))]))
 
 
-def _endpoint_boundary_level(*, is_start: bool, beat_in_bar: int) -> int:
-    if beat_in_bar != 0:
-        return 0 if is_start else 1
-    return 3 if is_start else 2
+def _endpoint_boundary_level(*, is_start: bool, beat_in_bar: int, strong_beats: Tuple[int, ...]) -> int:
+    if beat_in_bar not in strong_beats:
+        return 0
+    if is_start:
+        return 3
+    return 2 if beat_in_bar == 0 else 1
 
 
 def _candidate_score(
@@ -414,14 +416,19 @@ def _build_endpoint_distribution(
     plan_config = run_config.plan_config
     groove_ids = _groove_anchor_ids(run_config.style_config, vocabularies)
     key_ids = _key_anchor_ids(run_config, vocabularies)
-    role_ids = (0, 1) if is_start else (3, 2)
     head_ids = (1, 2)
     chord_qualities = ("maj", "min")
 
     scored_candidates: list[tuple[float, BeatState]] = []
     for meter_id in _meter_ids(run_config.style_config, vocabularies):
         beat_in_bar = beat_in_bar_by_meter[meter_id]
-        boundary_level = _endpoint_boundary_level(is_start=is_start, beat_in_bar=beat_in_bar)
+        strong_beats = vocabularies.meters.token_for_id(meter_id).strong_beats
+        boundary_level = _endpoint_boundary_level(is_start=is_start, beat_in_bar=beat_in_bar, strong_beats=strong_beats)
+        # Cadence and change roles require a boundary on strong beats
+        if is_start or boundary_level > 0:
+            role_ids = (0, 1) if is_start else (3, 2)
+        else:
+            role_ids = (0, 1)
         for key_id in key_ids:
             for quality in chord_qualities:
                 chord_id = _chord_id_for(key_id, quality, vocabularies)
