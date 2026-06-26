@@ -855,7 +855,7 @@ css = """
     .drum-check .wrap { display: flex !important; flex-direction: row !important; flex-wrap: wrap !important; gap: 12px !important; }
 """
 
-with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
+with gr.Blocks(title="MIDI Generator", fill_height=True) as demo:
     gr.Markdown("## MIDI Generator <small style='font-weight:700;color:#9aa4b2;font-size:14px'>  | write configs and click 'generate'</small>")
     with gr.Row(equal_height=False):
         with gr.Column(scale=0):
@@ -976,4 +976,4 @@ with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
 
 if __name__ == "__main__":
     demo.queue()
-    demo.launch(server_name="localhost", server_port=7860, inbrowser=True)
+    demo.launch(server_name="localhost", server_port=7860, inbrowser=True, css=css)
