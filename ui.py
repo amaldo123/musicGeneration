@@ -62,7 +62,7 @@ class GenerationParams:
     bass_program: int
     comping_program: int
     lead_program: int
-    drum_track: str
+    drum_track: list[str]
 
 
 @dataclass(frozen=True)
@@ -150,10 +150,9 @@ def _normalize_inputs(
     bass_program: Any,
     comping_program: Any,
     lead_program: Any,
-    drum_track: str,
+    drum_track: list[str],
 ) -> GenerationParams:
     meter = str(meter).strip()
-    drum_track = str(drum_track).strip()
     groove_family = str(groove_family).strip()
     rendering_method = str(rendering_method).strip()
 
@@ -162,7 +161,7 @@ def _normalize_inputs(
     if not groove_family:
         raise ValueError("groove family must not be empty.")
     if not drum_track:
-        raise ValueError("drum track must not be empty.")
+        raise ValueError("drum track must select at least one track.")
     if rendering_method not in MicrotonalRendering.__members__:
         raise ValueError(
             "rendering method must be one of "
@@ -190,8 +189,8 @@ def _normalize_inputs(
     )
 
 
-def _drum_track_names(drum_track: str) -> tuple[str, ...]:
-    return tuple(name.strip().lower() for name in drum_track.split(",") if name.strip())
+def _drum_track_names(drum_track: list[str]) -> tuple[str, ...]:
+    return tuple(name.strip().lower() for name in drum_track if name.strip())
 
 
 def _build_track_instruments(params: GenerationParams) -> dict[str, TrackInstrumentConfig]:
@@ -774,7 +773,7 @@ def generate_music(
     bass_program: Any,
     comping_program: Any,
     lead_program: Any,
-    drum_track: str,
+    drum_track: list[str],
 ) -> tuple[str, Any, Any, Any, str, str, str]:
     try:
         params = _normalize_inputs(
@@ -853,6 +852,7 @@ css = """
     .density-box { border: 1px solid #374151 !important; border-radius: 6px !important; padding: 2px 6px !important; }
     .density-box input[type=range] { height: 3px !important; }
     input[type=number] { padding: 1px 4px !important; }
+    .drum-check .wrap { display: flex !important; flex-direction: row !important; flex-wrap: wrap !important; gap: 12px !important; }
 """
 
 with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
@@ -887,7 +887,12 @@ with gr.Blocks(title="MIDI Generator", fill_height=True, css=css) as demo:
                     bass_program = gr.Number(label="track-program bass", value=34, precision=0)
                     comping_program = gr.Number(label="track-program comping", value=5, precision=0)
                     lead_program = gr.Number(label="track-program lead", value=88, precision=0)
-                    drum_track = gr.Textbox(label="drum-track", value="drums")
+                    drum_track = gr.CheckboxGroup(
+                        label="drum-track",
+                        choices=["drums", "bass", "comping", "lead"],
+                        value=["drums"],
+                        elem_classes="drum-check",
+                    )
                 with gr.Column(scale=2):
                     drum_density = gr.Slider(
                         label="drum-density",
