@@ -39,12 +39,8 @@ class EDO:
             return (int(self.config.base_tuning + h), 0)
 
         if self.config.microtonal_rendering_method == MicrotonalRendering.MTS:
-            # MTS would be handled by the renderer, not per-note.
-            # For now, we can return a direct mapping and assume the
-            # renderer is configured.
-            # This is a simplification.
-            midi_note = self.config.base_tuning + (h * 12 / self.config.n)
-            return (round(midi_note), 0)
+            midi_note_float = self.config.base_tuning + h * (12 / self.config.n)
+            return (int(round(midi_note_float)), 0)
 
         # MPE rendering
         midi_note_float = self.config.base_tuning + h * (12 / self.config.n)

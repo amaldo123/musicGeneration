@@ -182,6 +182,34 @@ def _mpe_setup_events(channels: Sequence[int], pb_range: int) -> List[Tuple[int,
     return events
 
 
+def _mts_tuning_sysex(edo: EDO) -> mido.Message:
+    """Build a MIDI Tuning Standard Bulk Dump SysEx for N-EDO.
+
+    Retunes all 128 MIDI notes so that standard note numbers map to the
+    nearest EDO pitch.  The synthesizer must support MTS for this to have
+    audible effect; otherwise playback falls back to 12-EDO.
+    """
+    n = edo.config.n
+    base = edo.config.base_tuning
+    name = f"{n}-EDO MTS".encode("ascii")[:16].ljust(16, b"\x00")
+
+    data = [0x7E, 0x7F, 0x08, 0x01, 0x00]
+    data.extend(name)
+
+    for midi_note in range(128):
+        edo_step = round((midi_note - base) * n / 12)
+        exact_semitones = base + edo_step * 12.0 / n
+        cents_dev = (exact_semitones - midi_note) * 100.0
+        detune = 8192 + round(cents_dev * 8192 / 100)
+        detune = max(0, min(16383, detune))
+        data.extend([midi_note, (detune >> 7) & 0x7F, detune & 0x7F])
+
+    checksum = (128 - (sum(data) % 128)) % 128
+    data.append(checksum)
+
+    return mido.Message("sysex", data=data, time=0)
+
+
 def _program_change_events(program: int, channels: Iterable[int]) -> List[Tuple[int, int, str, int, int, int]]:
     return [
         (0, -5, "program_change", program, 0, channel)
@@ -258,13 +286,26 @@ def _build_single_track_midi(
     output_path: str,
     ticks_per_beat: int,
 ) -> None:
-    allocated_notes = _allocate_channels(
-        tuple(_TrackNote(track_name="default", note=note) for note in notes)
-    )
-    events = _mpe_setup_events(
-        sorted({channel for _, channel in allocated_notes}),
-        edo.config.pitch_bend_range,
-    )
+    if edo.config.microtonal_rendering_method == MicrotonalRendering.MTS:
+        allocated_notes = [
+            (_TrackNote(track_name="default", note=note), 1)
+            for note in notes
+        ]
+        tuning_sysex = _mts_tuning_sysex(edo)
+    else:
+        allocated_notes = _allocate_channels(
+            tuple(_TrackNote(track_name="default", note=note) for note in notes)
+        )
+        tuning_sysex = None
+
+    if tuning_sysex is None:
+        mpe_events = _mpe_setup_events(
+            sorted({channel for _, channel in allocated_notes}),
+            edo.config.pitch_bend_range,
+        )
+    else:
+        mpe_events = []
+    events = list(mpe_events)
     events.extend(_note_events_for_track(allocated_notes, edo, ticks_per_beat))
     events.sort()
 
@@ -275,6 +316,8 @@ def _build_single_track_midi(
     track_name = f"{edo.config.n}-EDO Export"
     track.append(mido.MetaMessage("track_name", name=track_name, time=0))
     track.append(mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(120), time=0))
+    if tuning_sysex is not None:
+        track.append(tuning_sysex)
     _append_midi_messages(track, events)
     track.append(mido.MetaMessage("end_of_track", time=0))
 
@@ -306,7 +349,12 @@ def _allocate_score_track_channels(
     used_channels: list[int] = []
     allocations: dict[str, list[tuple[_TrackNote, int]]] = {}
 
-    if edo.config.n == 12:
+    use_simple_allocation = (
+        edo.config.n == 12
+        or edo.config.microtonal_rendering_method == MicrotonalRendering.MTS
+    )
+
+    if use_simple_allocation:
         next_melodic_channel = iter(MELODIC_CHANNELS)
         for track_name, track_notes in grouped_notes.items():
             spec = _track_spec(track_name, track_instruments)
@@ -375,7 +423,9 @@ def _build_multitrack_midi(
     conductor.append(
         mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(score.tempo_bpm), time=0)
     )
-    if melodic_channels:
+    if edo.config.microtonal_rendering_method == MicrotonalRendering.MTS and melodic_channels:
+        conductor.append(_mts_tuning_sysex(edo))
+    elif melodic_channels:
         _append_midi_messages(
             conductor,
             _mpe_setup_events(melodic_channels, edo.config.pitch_bend_range),
@@ -418,12 +468,6 @@ def render_midi(
 
     Score inputs preserve symbolic track labels as separate MIDI tracks.
     """
-    if edo.config.microtonal_rendering_method == MicrotonalRendering.MTS:
-        raise NotImplementedError(
-            "MTS (MIDI Tuning Standard) rendering is currently deferred. "
-            "Due to limited modern VST support, please use MicrotonalRendering.MPE."
-        )
-
     if isinstance(notes, Score):
         _build_multitrack_midi(
             notes,
