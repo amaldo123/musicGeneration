@@ -28,8 +28,10 @@ CORE_CHORD_QUALITIES: Tuple[str, ...] = ("maj", "min", "7", "dim")
 
 
 class _TokenLike(Protocol):
-    id: int
-    label: str
+    @property
+    def id(self) -> int: ...
+    @property
+    def label(self) -> str: ...
 
 
 TokenT = TypeVar("TokenT", bound=_TokenLike)

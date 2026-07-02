@@ -256,7 +256,7 @@ Configs + vocabularies + priors
 
 ## 7. Core Representations
 
-### 6.1 EDO Configuration
+### 7.1 EDO Configuration
 
 Pitch classes are represented in `Z_N`, where `N` is the number of equal divisions of the octave.
 
@@ -267,7 +267,7 @@ Examples:
 - `N = 12` for 12-EDO
 - `N = 19` for 19-EDO
 
-### 6.2 Beat-Level Structural State
+### 7.2 Beat-Level Structural State
 
 The beat-level structural state is represented using `BeatState`.
 
@@ -286,7 +286,7 @@ head_id
 groove_id
 ```
 
-### 6.3 Score-Level Representation
+### 7.3 Score-Level Representation
 
 The score-level representation uses `NoteEvent`.
 
@@ -351,13 +351,15 @@ musicGeneration/
 └── README.md
 ```
 
-| Path | Responsibility |
+| Package / Module  | Responsibility |
 | --- | --- |
 | `aimusic/` | Main Python package for the symbolic music generation system. |
+| `aimusic.app.cli` | CLI entrypoint with `generate`, `export`, and `inspect` subcommands. |
 | `aimusic.app.main` | Application and demo entrypoint for running generation workflows. |
 | `aimusic.core.config` | Immutable configuration dataclasses for generation, EDO settings, scoring, and planning. |
 | `aimusic.core.core_types` | Canonical shared data types such as `BeatState`, `Layer`, `Edge`, `Score`, and related structures. |
 | `aimusic.core.vocab` | Token vocabularies for meters, grooves, chords, keys, roles, and other symbolic categories. |
+| `aimusic.core.diagnostics` | Run manifests, SB diagnostics, tension curves, and structural diagnostics. |
 | `aimusic.core.rng` | Deterministic random-number-generation helpers used by sampling and planning code. |
 | `aimusic.theory.edo` | EDO pitch math, pitch-class operations, and microtonal helper functions. |
 | `aimusic.theory.tonal` | Tonal-system definitions, chord templates, tonal distances, and harmonic utilities. |
@@ -368,6 +370,7 @@ musicGeneration/
 | `aimusic.planning.graph` | Sparse layered-graph construction, layer expansion, edge building, and pruning. |
 | `aimusic.planning.plans` | Endpoint generation, section metadata, and orchestration for Method A and future Method B workflows. |
 | `aimusic.planning.sb` | Schrödinger Bridge solver, bridge extraction, trajectory sampling, and MAP path extraction. |
+| `aimusic.decode` | BeatState path to multi-track symbolic Score decoding (drums, bass, comping, lead). |
 | `aimusic.render` | Rendering package for converting symbolic scores into output formats such as MIDI. |
 | `aimusic.render.midi_render` | MIDI generation and deterministic MIDI file export, kept separate from planning logic. |
 | `tests/` | Test suite for validating core math, planning, scoring, routing, and deterministic MIDI behavior. |
@@ -376,7 +379,7 @@ musicGeneration/
 
 ---
 
-## 8. Implementation Checklist
+## 9. Implementation Checklist
 
 The current implementation progress is tracked below.
 
@@ -395,7 +398,7 @@ The current implementation progress is tracked below.
 
 ---
 
-## 9. Notes for Development
+## 10. Notes for Development
 
 When developing this project, remember to:
 
@@ -406,62 +409,3 @@ When developing this project, remember to:
 - Avoid introducing circular imports.
 - Preserve deterministic behavior where possible, especially for sampling and MIDI export.
 - Keep EDO logic generic and avoid hard-coding assumptions specific to 12-EDO.
-
----
-Core algorithms should be written against a small backend interface, starting with NumPy and preserving the possibility of using JAX later.
-
-## 3. Conceptual Pipeline
-
-The system is organized as a layered pipeline. A typical run executes:
-
-1.  `Configs + vocabularies + priors`
-2.  `-> endpoint plan (A or B)`
-3.  `-> build sparse layered graph of BeatState candidates`
-4.  `-> solve Schrodinger bridge on that graph`
-5.  `-> sample or MAP a BeatState trajectory`
-6.  `-> decode BeatState trajectory to multi-track symbolic Score`
-7.  `-> render Score to MIDI`
-
-## 4. Core Representations
-
--   **EDO Configuration:** Pitch classes are in Z_N, and pitch heights are integers measured in EDO steps.
--   **Beat-level Structural State (`St`):** A compact, token-based representation of the musical state at a beat: `(meter_id, beat_in_bar, boundary_lvl, key_id, chord_id, role_id, head_id, groove_id)`.
--   **Score-level Representation (`NoteEvent`):** A tuple representing a single note: `(ton, toff, h, v, e, track)`.
-
-## 13. Repository Organization
-
-The implementation now lives under the `aimusic/` package and is grouped by responsibility:
-
-| Package / Module                     | Responsibility                                               |
-| ------------------------------------ | ------------------------------------------------------------ |
-| `aimusic.core.config`                | Immutable configuration dataclasses.                         |
-| `aimusic.core.core_types`            | Canonical shared types such as `BeatState`, `Layer`, `Edge`, and `Score`. |
-| `aimusic.core.vocab`                 | Token vocabularies for meters, grooves, chords, keys, and roles. |
-| `aimusic.core.rng`                   | Deterministic RNG helpers for pure sampling code.            |
-| `aimusic.theory.edo`                 | EDO pitch math and rendering helpers.                        |
-| `aimusic.theory.tonal`               | Tonal system definition, chord templates, tonal distances.   |
-| `aimusic.scoring.gttm_features`      | Feature functions and weighted energy computation.           |
-| `aimusic.scoring.priors`             | `NullPrior`, placeholder `NeuralPrior`, manifests, and prior scoring helpers. |
-| `aimusic.scoring.rhythm_features`    | Compatibility facade over the GTTM beat-state scoring layer. |
-| `aimusic.planning.candidates`        | Hard gating and candidate proposal functions.                |
-| `aimusic.planning.graph`             | Layer expansion, sparse edge building, pruning.              |
-| `aimusic.planning.plans`             | Endpoint generation, section metadata, and Method A orchestration. |
-| `aimusic.planning.sb`                | Schrödinger bridge solver, bridge extraction, sampling, and MAP path extraction. |
-| `aimusic.decode`                     | BeatState path to multi-track symbolic Score decoding.       |
-| `aimusic.app.main`                   | Application / demo entrypoints.                              |
-
-The test suite lives under `tests/` and imports the packaged modules directly.
-
-## 17. Implementation Checklist (Practical)
-
-A recommended implementation order:
-
-1.  Define configs and token vocabularies (12-EDO first, then 19-EDO).
-2.  Implement GTTM feature energies and tonal distance metric (simple, rule-based).
-3.  Implement candidate generation and sparse graph builder with pruning.
-4.  Implement SB solver on sparse edges (NumPy backend).
-5.  Implement Method A plan, then Method B.
-6.  Implement decoder (drums, bass, comping, lead) and MIDI rendering.
-7.  Add the placeholder `NeuralPrior` seam and artifact contract.
-8.  Integrate the external neural prior implementation when it is available.
-9.  Add section-wise SB and richer diagnostics.
