@@ -161,7 +161,7 @@ def _normalize_inputs(
     if not groove_family:
         raise ValueError("groove family must not be empty.")
     if not drum_track:
-        raise ValueError("drum track must select at least one track.")
+raise ValueError("At least one track must be selected for drums.")
     if rendering_method not in MicrotonalRendering.__members__:
         raise ValueError(
             "rendering method must be one of "
