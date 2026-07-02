@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from math import isfinite
 from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
+
+_logger = logging.getLogger(__name__)
 
 from aimusic.core.config import SBBackend, SBConfig
 from aimusic.core.core_types import BeatState, Edge, EndpointDistribution, Layer
@@ -991,15 +994,19 @@ def solve_sb(problem: SBProblem) -> SBSolution:
         iterations = iteration
         residual_history.append(float(final_max_delta))
         log_terminal_backward = next_log_terminal_backward
+        _logger.debug(f"SB iteration {iteration}/{problem.sb_config.max_iterations}: max_delta={final_max_delta:g}")
         if final_max_delta <= problem.sb_config.tolerance:
             converged = True
             break
 
-    if not converged and problem.sb_config.raise_on_non_convergence:
-        raise SBSolverError(
-            "SB solver did not converge within max_iterations "
-            f"({problem.sb_config.max_iterations})."
-        )
+    _logger.info(f"SB finished: {iterations} iterations, converged={converged}, final_delta={final_max_delta:g}")
+    if not converged:
+        _logger.warning(f"SB did not converge after {iterations} iterations (delta={final_max_delta:g})")
+        if problem.sb_config.raise_on_non_convergence:
+            raise SBSolverError(
+                "SB solver did not converge within max_iterations "
+                f"({problem.sb_config.max_iterations})."
+            )
 
     backward = _propagate_backward(
         indexed_problem,
