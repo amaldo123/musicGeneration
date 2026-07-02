@@ -5,12 +5,6 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, cast
 
-from aimusic.core.config import EDOConfig
-from aimusic.decode import decode_path_to_score
-from aimusic.planning.plans import MethodARunConfig, run_method_a
-from aimusic.render.midi_render import SymbolicNote, render_midi
-from aimusic.theory.edo import EDO
-
 from aimusic.core.diagnostics import (
     RunManifest,
     SBDiagnostics,
@@ -22,8 +16,7 @@ from aimusic.core.core_types import Score
 from aimusic.core.vocab import DEFAULT_GROOVE_FAMILIES, DEFAULT_METER_SIGNATURES
 from aimusic.decode import decode_path_to_score
 from aimusic.planning.plans import MethodARunConfig, run_method_a
-from aimusic.render import render_midi
-from aimusic.render.midi_render import TrackInstrumentConfig
+from aimusic.render import TrackInstrumentConfig, render_midi
 from aimusic.theory.edo import EDO
 
 ROLE_TENSION = {
