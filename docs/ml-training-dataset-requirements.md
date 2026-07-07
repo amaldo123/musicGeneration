@@ -362,6 +362,36 @@ python -m aimusic.ml.cli train \
 | `--meter` | (StyleConfig default) | Filters which beats are annotated |
 | `--groove-family` | (StyleConfig default) | Groove token vocabulary |
 
+### Optional ClearML monitoring
+
+Install the monitoring extra:
+
+```bash
+pip install -e ".[ml,clearml]"
+```
+
+Enable experiment tracking during training:
+
+```bash
+python -m aimusic.ml.cli train \
+  --midi-dir ./corpus \
+  --output ./artifacts/prior_v1 \
+  --clearml \
+  --clearml-project aimusic/ml \
+  --clearml-task-name count-prior-v1 \
+  --clearml-tag jax_count_prior
+```
+
+ClearML logs:
+
+- Training hyperparameters (`edo`, `alpha`, `model_version`, `StyleConfig`)
+- Corpus metrics (`transition_count`, transitions per file, zero-yield file count)
+- Per-stream count-table statistics (total transitions, unique pairs, sparsity)
+- A per-file corpus table (`path`, `annotated_beats`, `transitions`)
+- Artifacts: trained bundle directory, `manifest.json`, and `vocabularies.json`
+
+Use `--no-clearml-artifacts` to log metrics only. Configure ClearML server credentials via the standard ClearML environment variables or `~/clearml.conf`.
+
 Programmatic API:
 
 ```python

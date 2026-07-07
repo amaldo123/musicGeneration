@@ -21,6 +21,9 @@ ml = [
   "optax",
   "orbax-checkpoint",
 ]
+clearml = [
+  "clearml",
+]
 dev = [
   "pytest",
   "flake8",
