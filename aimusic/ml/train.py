@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -17,6 +19,8 @@ from aimusic.ml.monitoring import (
     create_training_monitor,
 )
 from aimusic.scoring.priors import NeuralPriorManifest
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,7 @@ def train_prior_from_corpus(
     model_version: str = "v1",
     monitor: TrainingMonitor | None = None,
     clearml: ClearMLConfig | None = None,
+    quiet: bool = False,
 ) -> TrainResult:
     """Train a JAX count prior from a MIDI corpus and write an artifact bundle."""
     resolved_style = StyleConfig() if style_config is None else style_config
@@ -50,20 +55,61 @@ def train_prior_from_corpus(
         model_version=model_version,
     )
 
+    t_total = time.monotonic()
     try:
+        t0 = time.monotonic()
         vocabularies = build_default_vocabularies(resolved_style)
+        logger.info(
+            "[stage 1/5] vocab built in %.2fs | meters=%d keys=%d roles=%d grooves=%d",
+            time.monotonic() - t0,
+            len(vocabularies.meters),
+            len(vocabularies.keys),
+            len(vocabularies.roles),
+            len(vocabularies.grooves),
+        )
 
-        queries = load_corpus_transitions(midi_dir, resolved_style, edo=edo)
+        t1 = time.monotonic()
+        queries = load_corpus_transitions(
+            midi_dir,
+            resolved_style,
+            edo=edo,
+            progress=not quiet,
+        )
+        logger.info(
+            "[stage 2/5] corpus parsed: %d transitions in %.2fs",
+            len(queries),
+            time.monotonic() - t1,
+        )
+
+        t2 = time.monotonic()
         tokenized = examples_to_tokenized(queries, PriorFactorization.FACTORIZED)
+        logger.info(
+            "[stage 3/5] tokenized %d queries in %.2fs",
+            len(tokenized),
+            time.monotonic() - t2,
+        )
+
+        t3 = time.monotonic()
         count_state = train_counts(tokenized, vocabularies, alpha=alpha).to_dict()
+        logger.info(
+            "[stage 4/5] trained count tables (8 streams) on %d devices in %.2fs",
+            1,
+            time.monotonic() - t3,
+        )
 
         root = Path(midi_dir)
         midi_files = list(root.glob("**/*.mid")) + list(root.glob("**/*.midi"))
+        t4 = time.monotonic()
         corpus_files = collect_corpus_stats(
             midi_dir,
             resolved_style,
             vocabularies,
             edo=edo,
+        )
+        logger.info(
+            "[stage 5a/5] corpus stats for %d files in %.2fs",
+            len(corpus_files),
+            time.monotonic() - t4,
         )
 
         manifest = NeuralPriorManifest(
@@ -73,6 +119,7 @@ def train_prior_from_corpus(
             supports_batch_scoring=True,
             expected_edo=edo,
         )
+        t5 = time.monotonic()
         bundle_path = save_prior_bundle(
             output_dir,
             manifest=manifest,
@@ -80,6 +127,12 @@ def train_prior_from_corpus(
             style_config=resolved_style,
             count_state=count_state,
         )
+        logger.info(
+            "[stage 5b/5] saved bundle to %s in %.2fs",
+            bundle_path,
+            time.monotonic() - t5,
+        )
+
         result = TrainResult(
             bundle_dir=bundle_path,
             transition_count=len(queries),
@@ -94,6 +147,12 @@ def train_prior_from_corpus(
                 vocabularies=vocabularies,
                 count_state=count_state,
             ),
+        )
+        logger.info(
+            "TOTAL training time: %.2fs | %d transitions from %d MIDI files",
+            time.monotonic() - t_total,
+            result.transition_count,
+            result.midi_files_processed,
         )
         return result
     finally:

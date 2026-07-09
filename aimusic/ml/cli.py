@@ -1,10 +1,36 @@
 from __future__ import annotations
 
 import argparse
+import logging
+import os
 import sys
+
+os.environ.setdefault("JAX_PLATFORMS", "cuda")
 
 from aimusic.core.config import StyleConfig
 from aimusic.ml.monitoring import ClearMLConfig
+
+_LOG_FORMAT = "%(asctime)s %(levelname)-5s %(name)s | %(message)s"
+_LOG_DATEFMT = "%H:%M:%S"
+
+
+def _configure_logging(verbose: bool) -> None:
+    level = logging.INFO if verbose else logging.WARNING
+    logging.basicConfig(
+        level=level,
+        format=_LOG_FORMAT,
+        datefmt=_LOG_DATEFMT,
+        stream=sys.stderr,
+        force=True,
+    )
+    logging.getLogger("jax").setLevel(logging.WARNING)
+    logging.getLogger("jax._src").setLevel(logging.WARNING)
+    try:
+        import absl.logging as absl_logging
+
+        absl_logging.set_verbosity(absl_logging.WARNING)
+    except ImportError:
+        pass
 
 
 def _build_train_parser() -> argparse.ArgumentParser:
@@ -19,6 +45,11 @@ def _build_train_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--model-version", type=str, default="v1")
     train_parser.add_argument("--meter", action="append", default=None)
     train_parser.add_argument("--groove-family", action="append", default=None)
+    train_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress progress logs (only print the final summary line).",
+    )
     train_parser.add_argument(
         "--clearml",
         action="store_true",
@@ -57,7 +88,7 @@ def _handle_train(args: argparse.Namespace) -> None:
     except ImportError as exc:
         print(
             "Error: ML training requires optional dependencies.\n"
-            "Install with: pip install -e '.[ml]'",
+            "Install with: uv pip install -e '.[ml]'",
             file=sys.stderr,
         )
         raise SystemExit(1) from exc
@@ -87,6 +118,7 @@ def _handle_train(args: argparse.Namespace) -> None:
             alpha=args.alpha,
             model_version=args.model_version,
             clearml=clearml_config,
+            quiet=args.quiet,
         )
     except ImportError as exc:
         if clearml_config is not None:
@@ -106,6 +138,7 @@ def _handle_train(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = _build_train_parser()
     args = parser.parse_args()
+    _configure_logging(verbose=not getattr(args, "quiet", False))
     args.func(args)
 
 
