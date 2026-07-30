@@ -2,4 +2,5 @@ flake8
 mypy
 numpy
 mido
+gradio
 pytest
