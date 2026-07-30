@@ -1,0 +1,72 @@
+{
+  "score": {
+    "event_count": 5,
+    "ticks_per_beat": 480,
+    "tempo_bpm": 96.0,
+    "track_event_counts": {
+      "bass": 1,
+      "comping": 2,
+      "drums": 1,
+      "lead": 1
+    },
+    "note_events": [
+      {
+        "ton": 0,
+        "toff": 480,
+        "duration_ticks": 480,
+        "h": 36,
+        "v": 0.8,
+        "e": [],
+        "track": "bass"
+      },
+      {
+        "ton": 0,
+        "toff": 480,
+        "duration_ticks": 480,
+        "h": 48,
+        "v": 0.7,
+        "e": [],
+        "track": "comping"
+      },
+      {
+        "ton": 0,
+        "toff": 480,
+        "duration_ticks": 480,
+        "h": 52,
+        "v": 0.7,
+        "e": [],
+        "track": "comping"
+      },
+      {
+        "ton": 0,
+        "toff": 240,
+        "duration_ticks": 240,
+        "h": 60,
+        "v": 0.9,
+        "e": [],
+        "track": "lead"
+      },
+      {
+        "ton": 0,
+        "toff": 120,
+        "duration_ticks": 120,
+        "h": 36,
+        "v": 1.0,
+        "e": [],
+        "track": "drums"
+      }
+    ]
+  },
+  "midi": {
+    "sha256": "37cae29f873ccf51f1054c5eefdd9587b885268f14556478e256d7a6a9d84147",
+    "track_names": ["Conductor", "bass", "comping", "lead", "drums"],
+    "tempo": 625000,
+    "note_ons": [
+      ["bass", 0, 1, 36, 102],
+      ["comping", 0, 2, 48, 89],
+      ["comping", 0, 2, 52, 89],
+      ["lead", 0, 3, 60, 114],
+      ["drums", 0, 9, 36, 127]
+    ]
+  }
+}

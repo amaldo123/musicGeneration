@@ -79,6 +79,11 @@ class MicrotonalRendering(Enum):
     MTS = "mts"
 
 
+# MTS remains a recognized persisted value so the renderer can fail with a
+# clear compatibility error, but it is not currently a supported execution path.
+SUPPORTED_MICROTONAL_RENDERING_METHODS = (MicrotonalRendering.MPE,)
+
+
 class SBBackend(Enum):
     """Numerical backend used by the Schrödinger Bridge solver."""
 

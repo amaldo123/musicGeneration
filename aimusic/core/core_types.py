@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from math import isclose, isfinite
-from typing import TYPE_CHECKING, Any, Iterator, Tuple
+from typing import TYPE_CHECKING, Any, Iterator, Mapping, Tuple, cast
 
 if TYPE_CHECKING:
     from aimusic.core.vocab import TokenVocabulary, Vocabularies
@@ -191,6 +191,21 @@ class NoteEvent:
             "track": self.track,
         }
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> "NoteEvent":
+        """Deserialize a note event while reusing the canonical field validation."""
+        expressive_controls = data.get("e", ())
+        if not isinstance(expressive_controls, (list, tuple)):
+            raise TypeError("e must be a list or tuple of expressive controls.")
+        return cls(
+            ton=cast(Any, data["ton"]),
+            toff=cast(Any, data["toff"]),
+            h=cast(Any, data["h"]),
+            v=cast(Any, data["v"]),
+            e=tuple(cast(Any, expressive_controls)),
+            track=cast(Any, data.get("track", "default")),
+        )
+
     def pretty(self) -> str:
         """Return a compact, readable note-event summary."""
         return (
@@ -242,6 +257,25 @@ class Score:
             "track_event_counts": self.track_event_counts(),
             "note_events": [event.to_dict() for event in self.note_events],
         }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> "Score":
+        """Deserialize the canonical score JSON emitted by :meth:`to_dict`."""
+        raw_events = data.get("note_events", ())
+        if not isinstance(raw_events, (list, tuple)):
+            raise TypeError("note_events must be a list or tuple.")
+
+        events = []
+        for index, raw_event in enumerate(raw_events):
+            if not isinstance(raw_event, Mapping):
+                raise TypeError(f"note_events[{index}] must be a mapping.")
+            events.append(NoteEvent.from_dict(raw_event))
+
+        return cls(
+            note_events=tuple(events),
+            ticks_per_beat=cast(Any, data.get("ticks_per_beat", 480)),
+            tempo_bpm=cast(Any, data.get("tempo_bpm", 120.0)),
+        )
 
     def pretty(self, *, max_events: int = 3) -> str:
         """Return a concise score summary with an event preview."""

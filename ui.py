@@ -17,7 +17,13 @@ import mido
 import numpy as np
 
 from aimusic.app.cli import _build_structural_diagnostics, _json_ready
-from aimusic.core.config import DecodeConfig, EDOConfig, MicrotonalRendering, StyleConfig
+from aimusic.core.config import (
+    DecodeConfig,
+    EDOConfig,
+    MicrotonalRendering,
+    SUPPORTED_MICROTONAL_RENDERING_METHODS,
+    StyleConfig,
+)
 from aimusic.core.diagnostics import RunManifest, SBDiagnostics
 from aimusic.core.vocab import DEFAULT_GROOVE_FAMILIES, DEFAULT_METER_SIGNATURES
 from aimusic.decode import decode_path_to_score
@@ -163,10 +169,13 @@ def _normalize_inputs(
         raise ValueError("groove family must not be empty.")
     if not drum_track:
         raise ValueError("drum track must not be empty.")
-    if rendering_method not in MicrotonalRendering.__members__:
+    supported_rendering_names = tuple(
+        method.name for method in SUPPORTED_MICROTONAL_RENDERING_METHODS
+    )
+    if rendering_method not in supported_rendering_names:
         raise ValueError(
             "rendering method must be one of "
-            f"{', '.join(MicrotonalRendering.__members__)}."
+            f"{', '.join(supported_rendering_names)}."
         )
 
     return GenerationParams(
@@ -886,7 +895,10 @@ with gr.Blocks(title="MIDI Generator") as demo:
             pitch_bend_range = gr.Number(label="pitch-bend-range", value=2, precision=0)
             rendering_method = gr.Dropdown(
                 label="rendering-method",
-                choices=[method.name for method in MicrotonalRendering],
+                choices=[
+                    method.name
+                    for method in SUPPORTED_MICROTONAL_RENDERING_METHODS
+                ],
                 value=MicrotonalRendering.MPE.name,
             )
             bass_program = gr.Number(label="track-program bass", value=34, precision=0)
@@ -904,7 +916,7 @@ with gr.Blocks(title="MIDI Generator") as demo:
                 manifest_download = _download_component("Download manifest JSON")
             analysis = gr.Markdown()
 
-    generate_button.click(
+    generate_button.click(  # type: ignore[attr-defined]
         fn=generate_music,
         inputs=[
             seed,

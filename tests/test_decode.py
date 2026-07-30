@@ -1,8 +1,12 @@
 import unittest
 
-from aimusic.core.config import DecodeConfig
+from aimusic.core.config import DecodeConfig, StyleConfig
 from aimusic.core.core_types import BeatState, NoteEvent
-from aimusic.core.vocab import DEFAULT_VOCABULARIES
+from aimusic.core.vocab import (
+    DEFAULT_METER_SIGNATURES,
+    DEFAULT_VOCABULARIES,
+    build_default_vocabularies,
+)
 from aimusic.decode import (
     DEFAULT_TICKS_PER_BEAT,
     _cleanup_events,
@@ -55,6 +59,57 @@ class TestDecodeGrid(unittest.TestCase):
 
 
 class TestDecodeTracks(unittest.TestCase):
+    def test_all_supported_meters_across_representative_densities(self):
+        density_profiles = (
+            ("silent", 0.0),
+            ("sparse", 0.25),
+            ("dense", 1.0),
+        )
+        for meter in DEFAULT_METER_SIGNATURES:
+            vocabularies = build_default_vocabularies(
+                StyleConfig(
+                    allowed_meters=(meter,),
+                    groove_families=("straight",),
+                )
+            )
+            meter_token = vocabularies.meters.token_for_label(meter)
+            path = tuple(
+                BeatState(
+                    meter_id=meter_token.id,
+                    beat_in_bar=beat % meter_token.beats_per_bar,
+                    boundary_lvl=0,
+                    key_id=0,
+                    chord_id=0,
+                    role_id=0,
+                    head_id=0,
+                    groove_id=0,
+                )
+                for beat in range(meter_token.beats_per_bar + 1)
+            )
+            counts = {}
+            for profile_name, density in density_profiles:
+                score = decode_path_to_score(
+                    path,
+                    decode_config=DecodeConfig(
+                        drum_density=density,
+                        bass_density=density,
+                        comping_density=density,
+                        lead_density=density,
+                    ),
+                    vocabularies=vocabularies,
+                    include_terminal_state=True,
+                )
+                counts[profile_name] = len(score)
+                with self.subTest(meter=meter, density=profile_name):
+                    if density == 0.0:
+                        self.assertEqual(score.note_events, ())
+                    else:
+                        self.assertGreater(len(score), 0)
+
+            with self.subTest(meter=meter):
+                self.assertLess(counts["silent"], counts["sparse"])
+                self.assertLess(counts["sparse"], counts["dense"])
+
     def test_lead_head_anchor_stays_on_chord_tones(self):
         path = (
             state(chord="Cmaj", head="root"),

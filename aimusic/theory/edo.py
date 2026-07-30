@@ -56,11 +56,12 @@ class EDO:
         bend_range_cents = self.config.pitch_bend_range * 100
         bend_fraction = pitch_diff_cents / bend_range_cents
         
-        # Clamp bend_fraction to [-0.5, 0.5] to stay within the nearest note
-        bend_fraction = max(-0.5, min(0.5, bend_fraction))
+        bend_fraction = max(-1.0, min(1.0, bend_fraction))
 
-        # Pitch bend is from -8192 to 8191
-        pitch_bend = int(bend_fraction * 8191 * 2)
+        # MIDI pitch bend is asymmetric: -8192 is full-scale down and
+        # +8191 is full-scale up.
+        scale = 8191 if bend_fraction >= 0.0 else 8192
+        pitch_bend = round(bend_fraction * scale)
 
         return (int(nearest_midi_note), pitch_bend)
 

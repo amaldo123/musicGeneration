@@ -27,7 +27,7 @@ jobs:
 
       - name: Lint with flake8
         run: |
-          flake8 aimusic tests
+          flake8 aimusic tests ui.py
 
   typecheck:
     runs-on: ubuntu-latest
@@ -71,4 +71,6 @@ jobs:
 
       - name: Run tests
         run: |
+          python -m compileall -q aimusic ui.py
+          python -m tests.import_all
           python -m unittest discover -s tests -p "test_*.py"

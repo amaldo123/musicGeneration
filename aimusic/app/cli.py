@@ -3,7 +3,7 @@ import dataclasses
 import json
 import sys
 from pathlib import Path
-from typing import Any, Iterable, cast
+from typing import Any, Iterable
 
 from aimusic.core.diagnostics import (
     RunManifest,
@@ -11,7 +11,13 @@ from aimusic.core.diagnostics import (
     StructuralDiagnostics,
     TimelineEvent,
 )
-from aimusic.core.config import DecodeConfig, EDOConfig, MicrotonalRendering, StyleConfig
+from aimusic.core.config import (
+    DecodeConfig,
+    EDOConfig,
+    MicrotonalRendering,
+    SUPPORTED_MICROTONAL_RENDERING_METHODS,
+    StyleConfig,
+)
 from aimusic.core.core_types import Score
 from aimusic.core.vocab import DEFAULT_GROOVE_FAMILIES, DEFAULT_METER_SIGNATURES
 from aimusic.decode import decode_path_to_score
@@ -235,7 +241,7 @@ def handle_export(args: argparse.Namespace) -> None:
     with score_path.open("r", encoding="utf-8") as f:
         data = json.load(f)
 
-    score = cast(Any, Score).from_dict(data)
+    score = Score.from_dict(data)
     edo = _build_edo(args)
     output_path = Path(args.out) if args.out else score_path.with_suffix(".mid")
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -268,7 +274,7 @@ def main() -> None:
     gen_parser.add_argument("--pitch-bend-range", type=int, default=2)
     gen_parser.add_argument(
         "--rendering-method",
-        choices=[method.name for method in MicrotonalRendering],
+        choices=[method.name for method in SUPPORTED_MICROTONAL_RENDERING_METHODS],
         default=MicrotonalRendering.MPE.name,
     )
     gen_parser.add_argument(
@@ -310,7 +316,7 @@ def main() -> None:
     )
     exp_parser.add_argument(
         "--rendering-method",
-        choices=[method.name for method in MicrotonalRendering],
+        choices=[method.name for method in SUPPORTED_MICROTONAL_RENDERING_METHODS],
         default=MicrotonalRendering.MPE.name,
         help="Microtonal MIDI rendering method",
     )
