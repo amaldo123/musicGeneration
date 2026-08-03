@@ -783,7 +783,15 @@ def generate_music(
     comping_program: Any,
     lead_program: Any,
     drum_track: list[str],
-) -> tuple[str, Any, Any, Any, str, str, str]:
+) -> tuple[
+    str,
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    str,
+]:
     try:
         params = _normalize_inputs(
             seed,

@@ -11,14 +11,14 @@
     "comping": 0.4,
     "lead": 0.55
   },
-  "path_sha256": "76a5b6107cebbdda91688ab7adb17fa8d3af366c4b537bc29d4adc11e9d4d8d7",
-  "score_sha256": "51d22492e4af25131641b4c20507d32a06780105684d45894ba382faa57cfa9a",
-  "midi_sha256": "bcd45feb384681866b0261f265fba370595deac583e68655a9a3fd57119ce639",
-  "event_count": 176,
+  "path_sha256": "f48c417d1ff7d53283ede4bf656cd231b6b5821653d1d4b6a662d9c0b44c66f8",
+  "score_sha256": "659c0acfe9ae1eff948909ee9d79c6973fa62e75110ba5249835d05061c2a54d",
+  "midi_sha256": "27d5a81a7ebed5de606649c44059d5e8c9798a79e54759e4ff7c0f620a517364",
+  "event_count": 175,
   "track_event_counts": {
     "bass": 22,
-    "comping": 111,
-    "drums": 23,
-    "lead": 20
+    "comping": 108,
+    "drums": 24,
+    "lead": 21
   }
 }

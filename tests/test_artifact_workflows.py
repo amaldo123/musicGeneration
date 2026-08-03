@@ -122,7 +122,7 @@ class TestUiArtifactWorkflow(unittest.TestCase):
                 34,
                 5,
                 88,
-                "drums",
+                ["drums"],
             )
 
     def test_ui_generation_helper_writes_complete_consistent_artifacts(self) -> None:
@@ -143,7 +143,7 @@ class TestUiArtifactWorkflow(unittest.TestCase):
             bass_program=34,
             comping_program=5,
             lead_program=88,
-            drum_track="drums",
+            drum_track=["drums"],
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
