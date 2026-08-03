@@ -26,6 +26,9 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+# generated outputs
+outputs/
+
 # PyInstaller
 #  Used by Reinter to bundle python into a single executable
 *.manifest

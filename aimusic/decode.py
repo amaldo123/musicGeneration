@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import Iterable, Optional, Sequence, Tuple
+
+_logger = logging.getLogger(__name__)
 
 from aimusic.core.config import DecodeConfig
 from aimusic.core.core_types import BeatState, NoteEvent, Score
@@ -503,6 +506,7 @@ def decode_path_to_score(
             )
         )
     )
+    _logger.info(f"Decoded {len(events)} note events ({len(states)} beats)")
     return Score(
         note_events=_cleanup_events(events),
         ticks_per_beat=ticks_per_beat,
