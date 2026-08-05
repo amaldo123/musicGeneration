@@ -3,12 +3,15 @@ import unittest
 from pathlib import Path
 
 from aimusic.core.config import StyleConfig
-from aimusic.ml.train import train_prior_from_corpus
-from tests.conftest import requires_jax
+from tests.conftest import HAS_JAX, requires_jax, skip_unless_jax
 from tests.test_midi_ingest import write_simple_c_g_progression
+
+if HAS_JAX:
+    from aimusic.ml.train import train_prior_from_corpus
 
 
 @requires_jax
+@skip_unless_jax
 class TestMLTrain(unittest.TestCase):
     def test_train_writes_loadable_bundle(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

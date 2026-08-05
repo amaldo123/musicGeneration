@@ -4,14 +4,16 @@ import unittest
 from pathlib import Path
 
 from aimusic.core.config import PriorWeights, StyleConfig
-from aimusic.ml.inference import load_trained_neural_prior
-from aimusic.ml.train import train_prior_from_corpus
-from aimusic.planning.plans import MethodARunConfig, run_method_a
-from aimusic.scoring.priors import NullPrior, calculate_transition_log_weight
 from aimusic.core.core_types import BeatState
 from aimusic.core.vocab import DEFAULT_VOCABULARIES
-from tests.conftest import requires_jax
+from aimusic.planning.plans import MethodARunConfig, run_method_a
+from aimusic.scoring.priors import NullPrior, calculate_transition_log_weight
+from tests.conftest import HAS_JAX, requires_jax, skip_unless_jax
 from tests.test_midi_ingest import write_simple_c_g_progression
+
+if HAS_JAX:
+    from aimusic.ml.inference import load_trained_neural_prior
+    from aimusic.ml.train import train_prior_from_corpus
 
 
 def _state(chord: str = "Cmaj") -> BeatState:
@@ -28,6 +30,7 @@ def _state(chord: str = "Cmaj") -> BeatState:
 
 
 @requires_jax
+@skip_unless_jax
 class TestMLIntegration(unittest.TestCase):
     def test_loaded_prior_runs_method_a(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

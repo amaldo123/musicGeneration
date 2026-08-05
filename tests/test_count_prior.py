@@ -1,12 +1,14 @@
 import math
 import unittest
 
-from aimusic.core.vocab import DEFAULT_VOCABULARIES
-from aimusic.ml.count_prior import CountPriorConfig, CountPriorModel, train_counts
-from aimusic.ml.dataset import build_transition_examples, examples_to_tokenized
 from aimusic.core.core_types import BeatState
+from aimusic.core.vocab import DEFAULT_VOCABULARIES
+from aimusic.ml.dataset import build_transition_examples, examples_to_tokenized
 from aimusic.scoring.priors import StructuralEventTokens, TokenizedPriorQuery
-from tests.conftest import requires_jax
+from tests.conftest import HAS_JAX, requires_jax, skip_unless_jax
+
+if HAS_JAX:
+    from aimusic.ml.count_prior import CountPriorConfig, CountPriorModel, train_counts
 
 
 def _state(chord_label: str) -> BeatState:
@@ -23,6 +25,7 @@ def _state(chord_label: str) -> BeatState:
 
 
 @requires_jax
+@skip_unless_jax
 class TestCountPrior(unittest.TestCase):
     def test_repeated_transition_scores_highest(self):
         states = (

@@ -149,7 +149,7 @@ def handle_generate(args: argparse.Namespace) -> None:
     if args.prior_bundle:
         try:
             from aimusic.ml.inference import load_trained_neural_prior
-        except ImportError as exc:
+        except ImportError:
             print(
                 "Error: --prior-bundle requires optional ML dependencies.\n"
                 "Install with: pip install -e '.[ml]'",

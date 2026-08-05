@@ -15,7 +15,7 @@ from aimusic.ml.monitoring import (
     summarize_count_state,
 )
 from aimusic.scoring.priors import STRUCTURAL_STREAM_NAMES
-from tests.conftest import requires_jax
+from tests.conftest import requires_jax, skip_unless_jax
 from tests.test_midi_ingest import write_simple_c_g_progression
 
 
@@ -48,6 +48,7 @@ class TestMonitoringHelpers(unittest.TestCase):
         self.assertGreater(stats[0].transition_count, 0)
 
     @requires_jax
+    @skip_unless_jax
     def test_summarize_count_state_reports_stream_metrics(self):
         import jax.numpy as jnp
 

@@ -93,12 +93,17 @@ def _handle_train(args: argparse.Namespace) -> None:
         )
         raise SystemExit(1) from exc
 
-    style_kwargs = {}
-    if args.meter:
-        style_kwargs["allowed_meters"] = tuple(args.meter)
-    if args.groove_family:
-        style_kwargs["groove_families"] = tuple(args.groove_family)
-    style_config = StyleConfig(**style_kwargs) if style_kwargs else StyleConfig()
+    if args.meter and args.groove_family:
+        style_config = StyleConfig(
+            allowed_meters=tuple(args.meter),
+            groove_families=tuple(args.groove_family),
+        )
+    elif args.meter:
+        style_config = StyleConfig(allowed_meters=tuple(args.meter))
+    elif args.groove_family:
+        style_config = StyleConfig(groove_families=tuple(args.groove_family))
+    else:
+        style_config = StyleConfig()
     clearml_config = None
     if args.clearml:
         clearml_config = ClearMLConfig(

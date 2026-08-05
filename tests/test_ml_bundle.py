@@ -2,16 +2,19 @@ import tempfile
 import unittest
 
 from aimusic.core.config import PriorFactorization, StyleConfig
-from aimusic.scoring.priors import NeuralPriorManifest
 from aimusic.core.vocab import build_default_vocabularies
-from aimusic.ml.bundle import load_prior_bundle, save_prior_bundle
-from aimusic.ml.count_prior import CountPriorState, train_counts
 from aimusic.ml.dataset import build_transition_examples, examples_to_tokenized
-from tests.conftest import requires_jax
+from aimusic.scoring.priors import NeuralPriorManifest
+from tests.conftest import HAS_JAX, requires_jax, skip_unless_jax
 from tests.test_count_prior import _state
+
+if HAS_JAX:
+    from aimusic.ml.bundle import load_prior_bundle, save_prior_bundle
+    from aimusic.ml.count_prior import CountPriorState, train_counts
 
 
 @requires_jax
+@skip_unless_jax
 class TestPriorBundleIO(unittest.TestCase):
     def test_bundle_round_trips_count_state(self):
         import jax.numpy as jnp

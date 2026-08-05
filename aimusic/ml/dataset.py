@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Mapping, Optional, Sequence, Tuple
+from typing import Mapping, Sequence, Tuple
 
 from aimusic.core.config import PriorFactorization, StyleConfig
 from aimusic.core.core_types import BeatState

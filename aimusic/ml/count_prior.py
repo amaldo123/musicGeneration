@@ -20,7 +20,9 @@ class CountPriorState:
     alpha: jnp.ndarray
 
     def to_dict(self) -> dict[str, object]:
-        result = {stream: self.tables[stream] for stream in STRUCTURAL_STREAM_NAMES}
+        result: dict[str, object] = {
+            stream: self.tables[stream] for stream in STRUCTURAL_STREAM_NAMES
+        }
         result["alpha"] = self.alpha
         return result
 
@@ -101,7 +103,7 @@ def _make_score_fn(state: CountPriorState):
 
         return jax.vmap(score_one)(prev_ids, next_ids)
 
-    def score_packed_batch(packed: Mapping[str, object]) -> jnp.ndarray:
+    def score_packed_batch(packed: Mapping[str, jnp.ndarray]) -> jnp.ndarray:
         batch_size = packed["prev_chord"].shape[0]
         total = jnp.zeros(batch_size, dtype=jnp.float32)
         for stream in STRUCTURAL_STREAM_NAMES:

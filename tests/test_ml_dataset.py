@@ -1,4 +1,3 @@
-import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,8 +12,7 @@ from aimusic.ml.dataset import (
     pack_tokenized_batch,
     vocab_sizes_from_vocabularies,
 )
-from aimusic.scoring.priors import PriorContext, PriorQuery
-from tests.conftest import requires_jax
+from tests.conftest import requires_jax, skip_unless_jax
 from tests.test_midi_ingest import write_simple_c_g_progression
 
 
@@ -50,6 +48,7 @@ class TestDataset(unittest.TestCase):
 
 
 @requires_jax
+@skip_unless_jax
 class TestDatasetJAX(unittest.TestCase):
     def test_pack_tokenized_batch_shapes(self):
         states = (_state("Cmaj", 0), _state("G7", 1), _state("Cmaj", 0))

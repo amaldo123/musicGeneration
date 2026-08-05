@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import unittest
+
 import pytest
 
 
@@ -12,9 +14,16 @@ def _jax_available() -> bool:
         return False
 
 
+HAS_JAX = _jax_available()
+
 requires_jax = pytest.mark.skipif(
-    not _jax_available(),
+    not HAS_JAX,
     reason="JAX not installed; pip install -e '.[ml]'",
+)
+
+skip_unless_jax = unittest.skipUnless(
+    HAS_JAX,
+    "JAX not installed; pip install -e '.[ml]'",
 )
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence, Tuple
+from typing import Sequence, Tuple, TypedDict
 
 import mido
 
@@ -26,6 +26,13 @@ class MidiBeatGrid:
     ticks_per_beat: int
     tempo_bpm: float
     beats: Tuple[BeatWindow, ...]
+
+
+class _BeatWindowData(TypedDict):
+    harmonic: set[int]
+    drum_onsets: int
+    meter_signature: str
+    beats_per_bar: int
 
 
 def _meter_signature(numerator: int, denominator: int) -> str:
@@ -54,6 +61,15 @@ def _tick_to_beat(tick: int, ticks_per_beat: int) -> int:
     return tick // ticks_per_beat
 
 
+def _empty_window(meter_signature: str, beats_per_bar: int) -> _BeatWindowData:
+    return {
+        "harmonic": set(),
+        "drum_onsets": 0,
+        "meter_signature": meter_signature,
+        "beats_per_bar": beats_per_bar,
+    }
+
+
 def parse_midi_beats(path: str | Path) -> MidiBeatGrid:
     """Parse a MIDI file into beat-aligned harmonic and drum activity windows."""
     midi_path = Path(path)
@@ -70,7 +86,7 @@ def parse_midi_beats(path: str | Path) -> MidiBeatGrid:
 
     active_notes: dict[tuple[int, int], int] = {}
     beats_per_bar = numerator
-    beat_windows: dict[int, dict[str, object]] = {}
+    beat_windows: dict[int, _BeatWindowData] = {}
 
     for tick, message in messages:
         beat_index = _tick_to_beat(tick, ticks_per_beat)
@@ -88,19 +104,12 @@ def parse_midi_beats(path: str | Path) -> MidiBeatGrid:
             active_notes[key] = beat_index
             window = beat_windows.setdefault(
                 beat_index,
-                {
-                    "harmonic": set(),
-                    "drum_onsets": 0,
-                    "meter_signature": meter_signature,
-                    "beats_per_bar": beats_per_bar,
-                },
+                _empty_window(meter_signature, beats_per_bar),
             )
             if channel == 9:
-                window["drum_onsets"] = int(window["drum_onsets"]) + 1
+                window["drum_onsets"] = window["drum_onsets"] + 1
             else:
-                cast_harmonic = window["harmonic"]
-                assert isinstance(cast_harmonic, set)
-                cast_harmonic.add(int(message.note))
+                window["harmonic"].add(int(message.note))
         elif message.type in {"note_off", "note_on"}:
             channel = getattr(message, "channel", 0)
             key = (channel, message.note)
@@ -118,22 +127,17 @@ def parse_midi_beats(path: str | Path) -> MidiBeatGrid:
     for beat_index in range(max_beat + 1):
         window = beat_windows.get(
             beat_index,
-            {
-                "harmonic": set(),
-                "drum_onsets": 0,
-                "meter_signature": meter_signature,
-                "beats_per_bar": beats_per_bar,
-            },
+            _empty_window(meter_signature, beats_per_bar),
         )
-        bpb = int(window["beats_per_bar"])
+        bpb = window["beats_per_bar"]
         beats.append(
             BeatWindow(
                 beat_index=beat_index,
-                meter_signature=str(window["meter_signature"]),
+                meter_signature=window["meter_signature"],
                 beat_in_bar=beat_index % bpb,
                 bar_index=beat_index // bpb,
                 harmonic_pitches=tuple(sorted(window["harmonic"])),
-                drum_onsets=int(window["drum_onsets"]),
+                drum_onsets=window["drum_onsets"],
             )
         )
 

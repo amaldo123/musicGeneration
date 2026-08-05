@@ -61,7 +61,6 @@ def _head_id_for_melody(
         return vocabularies.heads.token_for_label("rest").id
 
     melody_pc = max(pitch_classes)
-    template = chord_pitch_classes(chord.root_pc, chord.quality, edo=edo)
     if melody_pc == chord.root_pc % edo:
         return vocabularies.heads.token_for_label("root").id
     if (chord.root_pc + 4) % edo in pitch_classes and melody_pc == (chord.root_pc + 4) % edo:
