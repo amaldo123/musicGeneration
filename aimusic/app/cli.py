@@ -145,7 +145,19 @@ def handle_generate(args: argparse.Namespace) -> None:
         decode_config=decode_config,
         edo=args.edo,
     )
-    plan_result = run_method_a(run_config)
+    prior = None
+    if args.prior_bundle:
+        try:
+            from aimusic.ml.inference import load_trained_neural_prior
+        except ImportError:
+            print(
+                "Error: --prior-bundle requires optional ML dependencies.\n"
+                "Install with: pip install -e '.[ml]'",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        prior = load_trained_neural_prior(args.prior_bundle)
+    plan_result = run_method_a(run_config, prior=prior)
     score = decode_path_to_score(
         plan_result.path,
         decode_config=decode_config,
@@ -284,6 +296,12 @@ def main() -> None:
         help="Treat the named symbolic track as percussion; repeatable.",
     )
     gen_parser.add_argument("--out", type=str, default="./outputs")
+    gen_parser.add_argument(
+        "--prior-bundle",
+        type=str,
+        default=None,
+        help="Path to a trained prior artifact bundle (requires optional [ml] extra).",
+    )
     gen_parser.set_defaults(func=handle_generate)
 
     ins_parser = subparsers.add_parser("inspect", help="Inspect diagnostics")
