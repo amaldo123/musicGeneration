@@ -23,6 +23,7 @@ from aimusic.core.vocab import (
     MeterToken,
     RoleToken,
     Vocabularies,
+    validate_vocabulary_compatibility,
 )
 
 
@@ -730,6 +731,7 @@ def transition_feature_vector(
     meter_map = _resolve_meters(meters)
     resolved_vocabs = _resolve_vocabularies(vocabularies)
     resolved_edo = _resolve_edo(resolved_vocabs, edo)
+    validate_vocabulary_compatibility(resolved_vocabs, resolved_edo)
     return {
         name: spec.func(
             prev_state,

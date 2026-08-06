@@ -124,6 +124,24 @@ class TestMidiRender(unittest.TestCase):
             
         self.assertIn("deferred", str(context.exception))
 
+    def test_19_edo_drum_notes_remain_general_midi_notes(self):
+        score = Score(
+            note_events=(
+                NoteEvent(0, 120, 36, 1.0, track="drums"),
+            )
+        )
+
+        render_midi(score, self.edo_19, self.output_path)
+
+        note_ons = [
+            message
+            for track in mido.MidiFile(self.output_path).tracks
+            for message in track
+            if message.type == "note_on" and message.velocity > 0
+        ]
+        self.assertEqual(note_ons[0].note, 36)
+        self.assertEqual(note_ons[0].channel, DEFAULT_DRUM_CHANNEL)
+
     def test_expressive_controls_rendered(self):
         """Tests that MPE Timbre (CC74) and Pressure (Aftertouch) are correctly written."""
         notes = [SymbolicNote(pitch_height=0, start_time=0.0, end_time=1.0, velocity=100, 

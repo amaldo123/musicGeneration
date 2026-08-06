@@ -198,6 +198,9 @@ Useful flags:
 - `--sample-path` switches from MAP extraction to sampled bridge-path extraction.
 - `--drum-density`, `--bass-density`, `--comping-density`, and `--lead-density` control decode density.
 - `--edo`, `--pitch-bend-range`, and `--rendering-method` control MIDI rendering behavior.
+- MPE is the supported microtonal export path. MTS is deliberately deferred and rejected.
+- Audio previews apply the exported MPE pitch bends; use an MPE-compatible player when
+  auditioning the downloaded MIDI in another application.
 - `--track-program track=program` overrides the General MIDI program for a symbolic track.
 - `--drum-track track` forces a symbolic track onto the percussion channel.
 
@@ -388,7 +391,8 @@ The current implementation progress is tracked below.
 - [ ] Implement decoder components for drums, bass, comping, and lead.
 - [ ] Implement MIDI rendering.
   - [x] 12-EDO direct mapping implemented.
-  - [ ] 19-EDO MPE support pending.
+  - [x] 19-EDO MPE rendering and cent-accuracy validation implemented.
+  - [ ] MTS rendering deferred; unsupported MTS selections fail explicitly.
 - [ ] Add the placeholder `NeuralPrior` seam and artifact contract.
 - [ ] Integrate the external neural prior implementation when available.
 - [ ] Add section-wise Schrödinger Bridge generation and richer diagnostics.

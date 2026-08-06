@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import io
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,8 +14,9 @@ import mido
 
 import ui
 from aimusic.app.cli import handle_export, handle_generate, handle_inspect
-from aimusic.core.config import MicrotonalRendering
-from aimusic.render import summarize_midi
+from aimusic.core.config import EDOConfig, MicrotonalRendering
+from aimusic.render import SymbolicNote, render_midi, summarize_midi
+from aimusic.theory.edo import EDO
 
 
 def _generate_args(output_dir: Path) -> argparse.Namespace:
@@ -103,6 +105,28 @@ class TestCliArtifactWorkflows(unittest.TestCase):
 
 
 class TestUiArtifactWorkflow(unittest.TestCase):
+    def test_builtin_preview_applies_mpe_pitch_bends(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            midi_path = Path(temp_dir) / "19-edo.mid"
+            edo = EDO(EDOConfig(n=19, base_tuning=60, pitch_bend_range=2))
+            render_midi(
+                [SymbolicNote(pitch_height=1, start_time=0.0, end_time=1.0)],
+                edo,
+                str(midi_path),
+            )
+
+            preview_note = ui._extract_midi_preview_notes(midi_path)[0]
+            actual_frequency = ui._midi_note_frequency(
+                preview_note.midi_note,
+                preview_note.pitch_bend,
+                preview_note.pitch_bend_range,
+            )
+            expected_midi_pitch = 60 + (12 / 19)
+            expected_frequency = 440.0 * (2.0 ** ((expected_midi_pitch - 69) / 12.0))
+            cents_error = abs(1200.0 * math.log2(actual_frequency / expected_frequency))
+
+        self.assertLessEqual(cents_error, 0.3)
+
     def test_ui_rejects_deferred_mts_rendering(self) -> None:
         with self.assertRaisesRegex(ValueError, "must be one of MPE"):
             ui._normalize_inputs(

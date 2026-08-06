@@ -7,6 +7,7 @@ from aimusic.core.vocab import (
     KeyToken,
     TokenVocabulary,
     build_default_vocabularies,
+    build_tonal_context,
 )
 
 
@@ -83,6 +84,30 @@ class TestStyleDrivenVocabularyBuild(unittest.TestCase):
         self.assertEqual(len(vocabs.chords), 76)
         self.assertTrue(vocabs.grooves.has_id(3))
         self.assertEqual(vocabs.grooves.token_for_label("odd_16ths").family, "odd")
+
+    def test_edo_derives_key_and_chord_root_cardinality(self):
+        context = build_tonal_context(19, StyleConfig())
+
+        self.assertEqual(context.n, 19)
+        self.assertEqual(len(context.vocabularies.keys), 19)
+        self.assertEqual(
+            {token.root_pc for token in context.vocabularies.chords},
+            set(range(19)),
+        )
+        self.assertEqual(
+            len(context.vocabularies.chords),
+            19 * len(CORE_CHORD_QUALITIES),
+        )
+
+    def test_explicit_incompatible_cardinality_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "same pitch-class space"):
+            build_tonal_context(
+                19,
+                StyleConfig(
+                    key_vocabulary_size=12,
+                    chord_vocabulary_size=48,
+                ),
+            )
 
 
 if __name__ == "__main__":

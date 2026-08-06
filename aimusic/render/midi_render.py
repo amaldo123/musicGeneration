@@ -198,7 +198,13 @@ def _note_events_for_track(
 ) -> List[Tuple[int, int, str, int, int, int]]:
     events: List[Tuple[int, int, str, int, int, int]] = []
     for track_note, channel in track_notes:
-        midi_note, pitch_bend = edo.to_midi(track_note.note.pitch_height)
+        if is_drum:
+            midi_note = track_note.note.pitch_height
+            if midi_note < 0 or midi_note > 127:
+                raise ValueError("Drum pitch must be in the MIDI note range 0..127.")
+            pitch_bend = 0
+        else:
+            midi_note, pitch_bend = edo.to_midi(track_note.note.pitch_height)
         start_tick = int(track_note.note.start_time * ticks_per_beat)
         end_tick = int(track_note.note.end_time * ticks_per_beat)
 

@@ -6,6 +6,7 @@ from aimusic.core.vocab import (
     DEFAULT_METER_SIGNATURES,
     DEFAULT_VOCABULARIES,
     build_default_vocabularies,
+    build_tonal_context,
 )
 from aimusic.decode import (
     DEFAULT_TICKS_PER_BEAT,
@@ -59,6 +60,59 @@ class TestDecodeGrid(unittest.TestCase):
 
 
 class TestDecodeTracks(unittest.TestCase):
+    def test_19_edo_pitch_classes_and_registers_are_preserved(self):
+        context = build_tonal_context(
+            19,
+            StyleConfig(
+                allowed_meters=("4/4",),
+                groove_families=("straight",),
+            ),
+        )
+        vocabs = context.vocabularies
+        root = 18
+        state_19 = BeatState(
+            meter_id=vocabs.meters.token_for_label("4/4").id,
+            beat_in_bar=0,
+            boundary_lvl=vocabs.boundaries.token_for_label("none").id,
+            key_id=root,
+            chord_id=vocabs.chords.token_for_label("pc_18maj").id,
+            role_id=vocabs.roles.token_for_label("hold").id,
+            head_id=vocabs.heads.token_for_label("root").id,
+            groove_id=vocabs.grooves.token_for_label("straight_8ths").id,
+        )
+        config = DecodeConfig(
+            bass_density=1.0,
+            comping_density=1.0,
+            lead_density=1.0,
+            drum_density=0.0,
+        )
+
+        score = decode_path_to_score(
+            (state_19,),
+            decode_config=config,
+            vocabularies=vocabs,
+            edo=context.n,
+            include_terminal_state=True,
+        )
+        chord_pcs = chord_pitch_classes(root, "maj", 19)
+
+        for event in score.note_events:
+            if event.track == "bass":
+                self.assertIn(event.h % 19, chord_pcs)
+                self.assertTrue(config.bass_register[0] <= event.h <= config.bass_register[1])
+            elif event.track == "comping":
+                self.assertIn(event.h % 19, chord_pcs)
+                self.assertTrue(
+                    config.comping_register[0] <= event.h <= config.comping_register[1]
+                )
+            elif event.track == "lead":
+                self.assertEqual(event.h % 19, root)
+                self.assertTrue(config.lead_register[0] <= event.h <= config.lead_register[1])
+
+    def test_decoder_rejects_mismatched_edo_and_vocabulary(self):
+        with self.assertRaisesRegex(ValueError, "incompatible with 19-EDO"):
+            decode_path_to_score((state(),), vocabularies=VOCABS, edo=19)
+
     def test_all_supported_meters_across_representative_densities(self):
         density_profiles = (
             ("silent", 0.0),

@@ -19,7 +19,11 @@ from aimusic.scoring.priors import (
     calculate_transition_log_weights,
 )
 from aimusic.theory.tonal import basic_space_distance, tonal_distance
-from aimusic.core.vocab import DEFAULT_VOCABULARIES, Vocabularies
+from aimusic.core.vocab import (
+    DEFAULT_VOCABULARIES,
+    Vocabularies,
+    validate_vocabulary_compatibility,
+)
 import numpy as np
 
 def _state_sort_key(state: BeatState) -> tuple[int, int, int, int, int, int, int, int]:
@@ -282,6 +286,7 @@ def build_sparse_graph(
     resolved_vocabs = _resolved_vocabs(vocabularies)
     resolved_prior = _resolved_prior(prior)
     resolved_edo = _edo_size(resolved_vocabs) if edo is None else edo
+    validate_vocabulary_compatibility(resolved_vocabs, resolved_edo)
 
     expected_end_time = start_layer.time_index + total_beats
     if end_layer.time_index != expected_end_time:
@@ -326,6 +331,7 @@ def build_sparse_graph(
                     vocabularies=resolved_vocabs,
                     prior=resolved_prior,
                     context=_build_prior_context(source_state, end_layer, current_time),
+                    edo=resolved_edo,
                     rng=rng, 
                     d_max=d_max
                 )

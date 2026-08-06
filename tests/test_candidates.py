@@ -7,11 +7,13 @@ from aimusic.planning.candidates import (
     apply_role_constraints,
     get_valid_next_states,
     is_legal_transition,
+    propose_chord_ids,
+    propose_key_ids,
 )
 from aimusic.core.config import StyleConfig
 from aimusic.core.core_types import BeatState
-from aimusic.scoring.priors import NeuralPrior
-from aimusic.core.vocab import DEFAULT_VOCABULARIES
+from aimusic.scoring.priors import NeuralPrior, NullPrior
+from aimusic.core.vocab import DEFAULT_VOCABULARIES, build_tonal_context
 
 
 VOCABS = DEFAULT_VOCABULARIES
@@ -163,6 +165,40 @@ class TestCandidateGeneration(unittest.TestCase):
                 for candidate in result.states
             )
         )
+
+    def test_19_edo_tonal_search_uses_19_step_fifth(self):
+        context = build_tonal_context(19, self.style)
+        vocabs = context.vocabularies
+        prev = BeatState(
+            meter_id=vocabs.meters.token_for_label("4/4").id,
+            beat_in_bar=0,
+            boundary_lvl=vocabs.boundaries.token_for_label("phrase").id,
+            key_id=0,
+            chord_id=vocabs.chords.token_for_label("pc_0maj").id,
+            role_id=vocabs.roles.token_for_label("change").id,
+            head_id=vocabs.heads.token_for_label("root").id,
+            groove_id=vocabs.grooves.token_for_label("straight_8ths").id,
+        )
+        role_id = vocabs.roles.token_for_label("change").id
+
+        key_ids = propose_key_ids(prev, 2, role_id, vocabs, edo=context.n)
+        chord_ids = propose_chord_ids(
+            prev,
+            0,
+            prev.meter_id,
+            1,
+            0,
+            role_id,
+            prev.groove_id,
+            NullPrior(),
+            None,
+            vocabs,
+            edo=context.n,
+        )
+        chord_roots = {vocabs.chords.token_for_id(item).root_pc for item in chord_ids}
+
+        self.assertIn(11, key_ids)
+        self.assertIn(11, chord_roots)
 
 
 if __name__ == "__main__":

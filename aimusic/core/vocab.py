@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Generic, Iterator, Mapping, Protocol, Sequence, Tuple, TypeVar
+from typing import Generic, Iterator, Mapping, Optional, Protocol, Sequence, Tuple, TypeVar
 
 from aimusic.core.config import StyleConfig
 
@@ -261,6 +261,46 @@ class Vocabularies:
     grooves: TokenVocabulary[GrooveToken]
 
 
+@dataclass(frozen=True)
+class TonalContext:
+    """One validated pitch-class space shared by every pipeline stage."""
+
+    n: int
+    vocabularies: Vocabularies
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.n, int) or isinstance(self.n, bool):
+            raise TypeError("TonalContext.n must be an int.")
+        if self.n < 1:
+            raise ValueError("TonalContext.n must be >= 1.")
+        validate_vocabulary_compatibility(self.vocabularies, self.n)
+
+
+def validate_vocabulary_compatibility(vocabularies: Vocabularies, n: int) -> None:
+    """Reject vocabularies whose key/chord roots use a different EDO."""
+    if not isinstance(vocabularies, Vocabularies):
+        raise TypeError("vocabularies must be a Vocabularies value.")
+    if not isinstance(n, int) or isinstance(n, bool):
+        raise TypeError("n must be an int.")
+    if n < 1:
+        raise ValueError("n must be >= 1.")
+
+    expected_roots = set(range(n))
+    key_ids = {token.id for token in vocabularies.keys}
+    key_roots = {token.root_pc for token in vocabularies.keys}
+    chord_roots = {token.root_pc for token in vocabularies.chords}
+    if key_ids != expected_roots or key_roots != expected_roots:
+        raise ValueError(
+            f"Key vocabulary is incompatible with {n}-EDO: expected roots 0..{n - 1}, "
+            f"found {len(key_roots)} roots."
+        )
+    if chord_roots != expected_roots:
+        raise ValueError(
+            f"Chord vocabulary is incompatible with {n}-EDO: expected roots 0..{n - 1}, "
+            f"found {len(chord_roots)} roots."
+        )
+
+
 def _build_meter_vocabulary(signatures: Sequence[str]) -> TokenVocabulary[MeterToken]:
     tokens = []
     for token_id, signature in enumerate(dict.fromkeys(signatures)):
@@ -381,11 +421,46 @@ def _build_groove_vocabulary(families: Sequence[str]) -> TokenVocabulary[GrooveT
     return TokenVocabulary(name="grooves", tokens=tuple(tokens))
 
 
-def build_default_vocabularies(style_config: StyleConfig | None = None) -> Vocabularies:
+def _resolve_tonal_cardinality(
+    style_config: StyleConfig | None,
+    edo: Optional[int],
+) -> int:
+    if edo is not None:
+        if not isinstance(edo, int) or isinstance(edo, bool):
+            raise TypeError("edo must be an int.")
+        if edo < 1:
+            raise ValueError("edo must be >= 1.")
+
+    explicit_keys = None if style_config is None else style_config.key_vocabulary_size
+    explicit_chords = None if style_config is None else style_config.chord_vocabulary_size
+    quality_count = len(CORE_CHORD_QUALITIES)
+    chord_roots: Optional[int] = None
+    if explicit_chords is not None:
+        if explicit_chords % quality_count != 0:
+            raise ValueError(
+                "chord_vocabulary_size must be a multiple of the core chord-quality count."
+            )
+        chord_roots = explicit_chords // quality_count
+
+    candidates = [value for value in (edo, explicit_keys, chord_roots) if value is not None]
+    cardinality = 12 if not candidates else candidates[0]
+    if any(value != cardinality for value in candidates[1:]):
+        raise ValueError(
+            "EDO, key_vocabulary_size, and chord-root cardinality must describe "
+            "the same pitch-class space."
+        )
+    return cardinality
+
+
+def build_default_vocabularies(
+    style_config: StyleConfig | None = None,
+    *,
+    edo: Optional[int] = None,
+) -> Vocabularies:
     """Build the shared first-pass structural vocabularies.
 
-    The default path is 12-EDO oriented, but chord/key cardinality is parameterized by the
-    configured vocabulary sizes so 19-EDO-compatible label spaces can be introduced later.
+    Key and chord-root cardinalities come from ``edo``. Explicit style overrides
+    must describe the same cardinality; incompatible pitch spaces fail early.
     """
 
     meter_signatures = (
@@ -394,14 +469,14 @@ def build_default_vocabularies(style_config: StyleConfig | None = None) -> Vocab
     groove_families = (
         DEFAULT_GROOVE_FAMILIES if style_config is None else style_config.groove_families
     )
-    key_cardinality = 12 if style_config is None else style_config.key_vocabulary_size
-    chord_vocabulary_size = 48 if style_config is None else style_config.chord_vocabulary_size
+    key_cardinality = _resolve_tonal_cardinality(style_config, edo)
+    chord_vocabulary_size = key_cardinality * len(CORE_CHORD_QUALITIES)
 
     meters = _build_meter_vocabulary(meter_signatures)
     beat_positions = _build_beat_position_vocabulary(
         max(token.beats_per_bar for token in meters)
     )
-    return Vocabularies(
+    vocabularies = Vocabularies(
         meters=meters,
         beat_positions=beat_positions,
         boundaries=_build_boundary_vocabulary(),
@@ -411,6 +486,24 @@ def build_default_vocabularies(style_config: StyleConfig | None = None) -> Vocab
         heads=_build_head_vocabulary(),
         grooves=_build_groove_vocabulary(groove_families),
     )
+    validate_vocabulary_compatibility(vocabularies, key_cardinality)
+    return vocabularies
+
+
+def build_tonal_context(
+    n: int,
+    style_config: StyleConfig | None = None,
+    *,
+    vocabularies: Optional[Vocabularies] = None,
+) -> TonalContext:
+    """Build or validate the single tonal context for one generation run."""
+    _resolve_tonal_cardinality(style_config, n)
+    resolved = (
+        build_default_vocabularies(style_config, edo=n)
+        if vocabularies is None
+        else vocabularies
+    )
+    return TonalContext(n=n, vocabularies=resolved)
 
 
 DEFAULT_VOCABULARIES = build_default_vocabularies()
