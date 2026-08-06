@@ -111,18 +111,24 @@ class TestMidiRender(unittest.TestCase):
             with self.subTest(pitch_height=pitch_height):
                 self.assertLessEqual(cents_error, 0.3)
     
-    def test_mts_rendering_is_deferred(self):
-        """Ensures MTS rendering is clearly documented as deferred with an exception."""
+    def test_mts_rendering_produces_sysex_and_notes(self):
+        """Tests that MTS rendering produces a SysEx tuning dump and playable notes."""
         config_mts = EDOConfig(
             n=19, base_tuning=60, pitch_bend_range=48, microtonal_rendering_method=MicrotonalRendering.MTS
         )
         edo_mts = EDO(config_mts)
         notes = [SymbolicNote(pitch_height=0, start_time=0.0, end_time=1.0)]
-        
-        with self.assertRaises(NotImplementedError) as context:
-            render_midi(notes, edo_mts, self.output_path)
-            
-        self.assertIn("deferred", str(context.exception))
+
+        render_midi(notes, edo_mts, self.output_path)
+
+        mid = mido.MidiFile(self.output_path)
+        all_msgs = [msg for track in mid.tracks for msg in track]
+        sysex_events = [msg for msg in all_msgs if msg.type == "sysex"]
+        note_on_events = [msg for msg in all_msgs if msg.type == "note_on"]
+
+        self.assertGreater(len(sysex_events), 0, "MTS SysEx tuning dump should be present")
+        self.assertEqual(len(note_on_events), 1)
+        self.assertEqual(note_on_events[0].note, 60)
 
     def test_19_edo_drum_notes_remain_general_midi_notes(self):
         score = Score(

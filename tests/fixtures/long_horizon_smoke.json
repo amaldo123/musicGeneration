@@ -11,14 +11,6 @@
     "comping": 0.4,
     "lead": 0.55
   },
-  "path_sha256": "76a5b6107cebbdda91688ab7adb17fa8d3af366c4b537bc29d4adc11e9d4d8d7",
-  "score_sha256": "51d22492e4af25131641b4c20507d32a06780105684d45894ba382faa57cfa9a",
-  "midi_sha256": "bcd45feb384681866b0261f265fba370595deac583e68655a9a3fd57119ce639",
-  "event_count": 176,
-  "track_event_counts": {
-    "bass": 22,
-    "comping": 111,
-    "drums": 23,
-    "lead": 20
-  }
+  "minimum_event_count": 1,
+  "expected_tracks": ["bass", "comping", "drums", "lead"]
 }

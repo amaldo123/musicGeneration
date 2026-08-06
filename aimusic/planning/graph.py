@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple
+
+_logger = logging.getLogger(__name__)
 
 from aimusic.planning.candidates import (
     CandidateGenerationResult,
@@ -461,6 +464,7 @@ def build_sparse_graph(
                 pruned_states=tuple(pruned_states),
             )
         )
+        _logger.debug(f"Layer {next_time}: {len(current_layer)} sources, {raw_candidate_count} candidates, {len(next_layer)} kept, {len(edge_layers[-1])} edges")
 
     return SparseGraph(
         layers=tuple(layers),

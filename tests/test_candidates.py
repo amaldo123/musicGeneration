@@ -90,6 +90,33 @@ class TestHardGatingRules(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(reason, "cadence_requires_strong_beat")
 
+    def test_configured_strong_beat_in_seven_four_is_accepted(self):
+        prev = state(meter="7/4", beat=3, chord="G7", role="prep")
+        candidate = state(
+            meter="7/4",
+            beat=4,
+            boundary="local",
+            chord="Cmaj",
+            role="cad",
+        )
+
+        position_ok, position_reason = apply_position_constraints(
+            prev,
+            candidate,
+            style_config=self.style,
+            vocabularies=VOCABS,
+        )
+        role_ok, role_reason = apply_role_constraints(
+            prev,
+            candidate,
+            vocabularies=VOCABS,
+        )
+
+        self.assertTrue(position_ok)
+        self.assertIsNone(position_reason)
+        self.assertTrue(role_ok)
+        self.assertIsNone(role_reason)
+
 
 class TestCandidateGeneration(unittest.TestCase):
     def setUp(self):

@@ -68,7 +68,7 @@ class GenerationParams:
     bass_program: int
     comping_program: int
     lead_program: int
-    drum_track: str
+    drum_track: list[str]
 
 
 @dataclass(frozen=True)
@@ -158,10 +158,9 @@ def _normalize_inputs(
     bass_program: Any,
     comping_program: Any,
     lead_program: Any,
-    drum_track: str,
+    drum_track: list[str],
 ) -> GenerationParams:
     meter = str(meter).strip()
-    drum_track = str(drum_track).strip()
     groove_family = str(groove_family).strip()
     rendering_method = str(rendering_method).strip()
 
@@ -201,8 +200,8 @@ def _normalize_inputs(
     )
 
 
-def _drum_track_names(drum_track: str) -> tuple[str, ...]:
-    return tuple(name.strip().lower() for name in drum_track.split(",") if name.strip())
+def _drum_track_names(drum_track: list[str]) -> tuple[str, ...]:
+    return tuple(name.strip().lower() for name in drum_track if name.strip())
 
 
 def _build_track_instruments(params: GenerationParams) -> dict[str, TrackInstrumentConfig]:
@@ -638,7 +637,7 @@ def _build_playback_dashboard(
     }}
     .grid {{
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: 1fr 1fr 2fr;
       gap: 8px;
     }}
     .cell {{
@@ -769,7 +768,7 @@ def _build_playback_dashboard(
     )
 
 
-def _score_analysis(score_path: Path, manifest_path: Path) -> str:
+def _score_summary(score_path: Path, manifest_path: Path) -> str:
     score_data = _load_json(score_path)
     manifest_data = _load_json(manifest_path)
 
@@ -782,18 +781,24 @@ def _score_analysis(score_path: Path, manifest_path: Path) -> str:
     duration_seconds = duration_beats * 60.0 / tempo_bpm
     meter = manifest_data.get("config", {}).get("meter", "unknown")
 
-    track_lines = "\n".join(
-        f"| {track} | {count} |" for track, count in sorted(track_counts.items())
-    )
-    if not track_lines:
-        track_lines = "| none | 0 |"
-
     return (
         "### Analysis\n"
         f"- Tempo: {tempo_bpm:g} BPM\n"
         f"- Meter: {meter}\n"
         f"- Track count: {len(track_counts)}\n"
-        f"- Duration: {duration_seconds:.2f}s ({duration_beats:.2f} beats)\n\n"
+        f"- Duration: {duration_seconds:.2f}s ({duration_beats:.2f} beats)"
+    )
+
+
+def _score_table(score_path: Path, manifest_path: Path) -> str:
+    score_data = _load_json(score_path)
+    track_counts = score_data.get("track_event_counts", {})
+    track_lines = "\n".join(
+        f"| {track} | {count} |" for track, count in sorted(track_counts.items())
+    )
+    if not track_lines:
+        track_lines = "| none | 0 |"
+    return (
         "| Track | Notes |\n"
         "| --- | ---: |\n"
         f"{track_lines}"
@@ -823,8 +828,16 @@ def generate_music(
     bass_program: Any,
     comping_program: Any,
     lead_program: Any,
-    drum_track: str,
-) -> tuple[str, Any, Any, Any, str, str]:
+    drum_track: list[str],
+) -> tuple[
+    str,
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    str,
+]:
     try:
         params = _normalize_inputs(
             seed,
@@ -846,19 +859,21 @@ def generate_music(
             drum_track,
         )
         artifacts = _generate_artifacts(params)
-        analysis = _score_analysis(artifacts.score_path, artifacts.manifest_path)
+        summary = _score_summary(artifacts.score_path, artifacts.manifest_path)
+        table = _score_table(artifacts.score_path, artifacts.manifest_path)
     except Exception:
         return (
             "",
-            None,
-            None,
-            None,
-            "",
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(value="", visible=False),
+            gr.update(value="", visible=False),
             _error_markdown(traceback.format_exc(), include_traceback=True),
         )
 
     try:
-        converter = _convert_midi_to_wav(artifacts.midi_path, artifacts.wav_path)
+        _ = _convert_midi_to_wav(artifacts.midi_path, artifacts.wav_path)
         dashboard = _build_playback_dashboard(
             artifacts.wav_path,
             artifacts.score_path,
@@ -867,20 +882,22 @@ def generate_music(
     except MidiAudioConversionError as exc:
         return (
             "",
-            str(artifacts.midi_path),
-            str(artifacts.score_path),
-            str(artifacts.manifest_path),
-            analysis,
+            gr.update(value=str(artifacts.midi_path), visible=True),
+            gr.update(value=str(artifacts.score_path), visible=True),
+            gr.update(value=str(artifacts.manifest_path), visible=True),
+            gr.update(value=summary, visible=True),
+            gr.update(value=table, visible=True),
             _error_markdown(str(exc)),
         )
 
     return (
         dashboard,
-        str(artifacts.midi_path),
-        str(artifacts.score_path),
-        str(artifacts.manifest_path),
-        analysis,
-        f"Generated run `{artifacts.run_id}` and rendered WAV with `{converter}`.",
+        gr.update(value=str(artifacts.midi_path), visible=True),
+        gr.update(value=str(artifacts.score_path), visible=True),
+        gr.update(value=str(artifacts.manifest_path), visible=True),
+        gr.update(value=summary, visible=True),
+        gr.update(value=table, visible=True),
+        "",
     )
 
 
@@ -890,10 +907,21 @@ def _download_component(label: str) -> gr.components.Component:
     return gr.File(label=label, interactive=False)
 
 
-with gr.Blocks(title="MIDI Generator") as demo:
-    gr.Markdown("# MIDI Generator")
-    with gr.Row():
-        with gr.Column(scale=1):
+css = """
+    .block { padding: 0 8px !important; }
+    .form { gap: 2px !important; }
+    .wrap { gap: 2px !important; padding: 0 !important; }
+    label { margin-bottom: 0 !important; font-size: 11px !important; }
+    .density-box { border: 1px solid #374151 !important; border-radius: 6px !important; padding: 2px 6px !important; }
+    .density-box input[type=range] { height: 3px !important; }
+    input[type=number] { padding: 1px 4px !important; }
+    .drum-check .wrap { display: flex !important; flex-direction: row !important; flex-wrap: wrap !important; gap: 12px !important; }
+"""
+
+with gr.Blocks(title="MIDI Generator", fill_height=True) as demo:
+    gr.Markdown("## MIDI Generator <small style='font-weight:700;color:#9aa4b2;font-size:14px'>  | write configs and click 'generate'</small>")
+    with gr.Row(equal_height=False):
+        with gr.Column(scale=0):
             seed = gr.Number(label="seed", value=11, precision=0)
             beats = gr.Number(label="beats", value=8, precision=0)
             edo = gr.Number(label="edo", value=12, precision=0)
@@ -909,35 +937,6 @@ with gr.Blocks(title="MIDI Generator") as demo:
                 value="straight",
             )
             tempo_bpm = gr.Number(label="tempo-bpm", value=120)
-            sample_path = gr.Checkbox(label="sample-path", value=False)
-            drum_density = gr.Slider(
-                label="drum-density",
-                minimum=0,
-                maximum=1,
-                step=0.01,
-                value=0.75,
-            )
-            bass_density = gr.Slider(
-                label="bass-density",
-                minimum=0,
-                maximum=1,
-                step=0.01,
-                value=0.60,
-            )
-            comping_density = gr.Slider(
-                label="comping-density",
-                minimum=0,
-                maximum=1,
-                step=0.01,
-                value=0.55,
-            )
-            lead_density = gr.Slider(
-                label="lead-density",
-                minimum=0,
-                maximum=1,
-                step=0.01,
-                value=0.45,
-            )
             pitch_bend_range = gr.Number(label="pitch-bend-range", value=2, precision=0)
             rendering_method = gr.Dropdown(
                 label="rendering-method",
@@ -947,20 +946,66 @@ with gr.Blocks(title="MIDI Generator") as demo:
                 ],
                 value=MicrotonalRendering.MPE.name,
             )
-            bass_program = gr.Number(label="track-program bass", value=34, precision=0)
-            comping_program = gr.Number(label="track-program comping", value=5, precision=0)
-            lead_program = gr.Number(label="track-program lead", value=88, precision=0)
-            drum_track = gr.Textbox(label="drum-track", value="drums")
-            generate_button = gr.Button("Generate", variant="primary")
 
         with gr.Column(scale=2):
-            status = gr.Markdown()
+            with gr.Row(equal_height=True):
+                with gr.Column(scale=1):
+                    bass_program = gr.Number(label="track-program bass", value=34, precision=0)
+                    comping_program = gr.Number(label="track-program comping", value=5, precision=0)
+                    lead_program = gr.Number(label="track-program lead", value=88, precision=0)
+                    drum_track = gr.CheckboxGroup(
+                        label="drum-track",
+                        choices=["drums", "bass", "comping", "lead"],
+                        value=["drums"],
+                        elem_classes="drum-check",
+                    )
+                with gr.Column(scale=2):
+                    drum_density = gr.Slider(
+                        label="drum-density",
+                        minimum=0,
+                        maximum=1,
+                        step=0.01,
+                        value=0.75,
+                        elem_classes="density-box",
+                    )
+                    bass_density = gr.Slider(
+                        label="bass-density",
+                        minimum=0,
+                        maximum=1,
+                        step=0.01,
+                        value=0.60,
+                        elem_classes="density-box",
+                    )
+                    comping_density = gr.Slider(
+                        label="comping-density",
+                        minimum=0,
+                        maximum=1,
+                        step=0.01,
+                        value=0.55,
+                        elem_classes="density-box",
+                    )
+                    lead_density = gr.Slider(
+                        label="lead-density",
+                        minimum=0,
+                        maximum=1,
+                        step=0.01,
+                        value=0.45,
+                        elem_classes="density-box",
+                    )
+                    sample_path = gr.Checkbox(label="Choose Sample Path", value=False)
+            generate_button = gr.Button("Generate", variant="primary")
             dashboard = gr.HTML()
-            with gr.Row():
-                midi_download = _download_component("Download MIDI")
-                score_download = _download_component("Download score JSON")
-                manifest_download = _download_component("Download manifest JSON")
-            analysis = gr.Markdown()
+            status = gr.Markdown()
+            with gr.Row(equal_height=True):
+                summary = gr.Markdown(visible=False, scale=1)
+                table = gr.Markdown(visible=False, scale=1)
+                with gr.Column(scale=1, min_width=160):
+                    midi_download = _download_component("Download MIDI")
+                    score_download = _download_component("Download score JSON")
+                    manifest_download = _download_component("Download manifest JSON")
+                    midi_download.visible = False
+                    score_download.visible = False
+                    manifest_download.visible = False
 
     generate_button.click(  # type: ignore[attr-defined]
         fn=generate_music,
@@ -988,13 +1033,13 @@ with gr.Blocks(title="MIDI Generator") as demo:
             midi_download,
             score_download,
             manifest_download,
-            analysis,
+            summary,
+            table,
             status,
         ],
         show_progress="full",
     )
 
-
 if __name__ == "__main__":
     demo.queue()
-    demo.launch(server_name="localhost", server_port=7860, inbrowser=True)
+    demo.launch(server_name="localhost", server_port=7860, inbrowser=True, css=css)

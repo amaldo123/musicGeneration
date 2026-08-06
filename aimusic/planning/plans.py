@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Optional, Sequence, Tuple
 
 import numpy as np
+
+_logger = logging.getLogger(__name__)
 
 from aimusic.core.config import (
     DecodeConfig,
@@ -379,10 +382,12 @@ def _groove_anchor_ids(style_config: StyleConfig, vocabularies: Vocabularies) ->
     return tuple(dict.fromkeys(ids[: max(1, min(4, len(ids)))]))
 
 
-def _endpoint_boundary_level(*, is_start: bool, beat_in_bar: int) -> int:
-    if beat_in_bar != 0:
-        return 0 if is_start else 1
-    return 3 if is_start else 2
+def _endpoint_boundary_level(*, is_start: bool, beat_in_bar: int, strong_beats: Tuple[int, ...]) -> int:
+    if beat_in_bar not in strong_beats:
+        return 0
+    if is_start:
+        return 3
+    return 2 if beat_in_bar == 0 else 1
 
 
 def _candidate_score(
@@ -416,14 +421,19 @@ def _build_endpoint_distribution(
     plan_config = run_config.plan_config
     groove_ids = _groove_anchor_ids(run_config.style_config, vocabularies)
     key_ids = _key_anchor_ids(run_config, vocabularies)
-    role_ids = (0, 1) if is_start else (3, 2)
     head_ids = (1, 2)
     chord_qualities = ("maj", "min")
 
     scored_candidates: list[tuple[float, BeatState]] = []
     for meter_id in _meter_ids(run_config.style_config, vocabularies):
         beat_in_bar = beat_in_bar_by_meter[meter_id]
-        boundary_level = _endpoint_boundary_level(is_start=is_start, beat_in_bar=beat_in_bar)
+        strong_beats = vocabularies.meters.token_for_id(meter_id).strong_beats
+        boundary_level = _endpoint_boundary_level(is_start=is_start, beat_in_bar=beat_in_bar, strong_beats=strong_beats)
+        # Cadence and change roles require a boundary on strong beats
+        if is_start or boundary_level > 0:
+            role_ids = (0, 1) if is_start else (3, 2)
+        else:
+            role_ids = (0, 1)
         for key_id in key_ids:
             for quality in chord_qualities:
                 chord_id = _chord_id_for(key_id, quality, vocabularies)
@@ -551,6 +561,7 @@ def run_method_a(
     vocabularies: Optional[Vocabularies] = None,
 ) -> MethodAPlanResult:
     """Run Method A from endpoint planning through SB path extraction."""
+    _logger.info(f"Method A: {run_config.total_beats} beats, seed={run_config.seed}")
     tonal_context = build_tonal_context(
         run_config.edo,
         run_config.style_config,
@@ -566,6 +577,7 @@ def run_method_a(
         selection_key=endpoint_key,
         sample_endpoints=run_config.use_sampling,
     )
+    _logger.info(f"Endpoints: start={endpoints.start_choice.state} end={endpoints.end_choice.state}")
     start_endpoint = _singleton_endpoint_distribution(
         endpoints.start_choice.state,
         time_index=0,
@@ -587,6 +599,7 @@ def run_method_a(
         rng=_numpy_generator_from_key(graph_key),
         d_max=resolved_sb.d_max,
     )
+    _logger.info(f"Graph built: {len(graph.layers)} layers, {sum(len(l.states) for l in graph.layers)} states")
     aligned_endpoints = MethodAEndpoints(
         pi0=_align_endpoint_distribution(endpoints.pi0, graph.layers[0]),
         piT=_align_endpoint_distribution(endpoints.piT, graph.layers[-1]),
@@ -597,14 +610,17 @@ def run_method_a(
     problem = build_sb_problem(graph, start_endpoint, end_endpoint, sb_config=resolved_sb)
     solution = solve_sb(problem)
     bridge = solution.to_bridge()
+    _logger.info(f"SB solved: converged={solution.trace.converged}, iterations={solution.trace.iterations}")
 
     if run_config.use_sampling:
         sampled_path, _ = sample_bridge_path(bridge, bridge_key, include_edges=True, include_debug=True)
         path = sampled_path.path
         path_score = None
+        _logger.info(f"Sampled path: {len(path) - 1} beats")
     else:
         path, path_score = map_bridge_path(bridge)
         sampled_path = None
+        _logger.info(f"MAP path: {len(path) - 1} beats")
 
     diagnostics = MethodAPlanDiagnostics(
         section_tags=tuple(section.name for section in endpoints.sections),
