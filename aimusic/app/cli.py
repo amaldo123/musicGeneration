@@ -11,14 +11,8 @@ from aimusic.core.diagnostics import (
     StructuralDiagnostics,
     TimelineEvent,
 )
-from aimusic.core.config import (
-    DecodeConfig,
-    EDOConfig,
-    MicrotonalRendering,
-    SUPPORTED_MICROTONAL_RENDERING_METHODS,
-    StyleConfig,
-)
-from aimusic.core.core_types import Score
+from aimusic.core.config import DecodeConfig, EDOConfig, MicrotonalRendering, StyleConfig
+from aimusic.core.core_types import Score, ScoreValidationError
 from aimusic.core.vocab import DEFAULT_GROOVE_FAMILIES, DEFAULT_METER_SIGNATURES
 from aimusic.decode import decode_path_to_score
 from aimusic.planning.plans import MethodARunConfig, run_method_a
@@ -151,7 +145,19 @@ def handle_generate(args: argparse.Namespace) -> None:
         decode_config=decode_config,
         edo=args.edo,
     )
-    plan_result = run_method_a(run_config)
+    prior = None
+    if args.prior_bundle:
+        try:
+            from aimusic.ml.inference import load_trained_neural_prior
+        except ImportError:
+            print(
+                "Error: --prior-bundle requires optional ML dependencies.\n"
+                "Install with: pip install -e '.[ml]'",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        prior = load_trained_neural_prior(args.prior_bundle)
+    plan_result = run_method_a(run_config, prior=prior)
     score = decode_path_to_score(
         plan_result.path,
         decode_config=decode_config,
@@ -199,48 +205,96 @@ def handle_generate(args: argparse.Namespace) -> None:
     print(f"Generated multitrack MIDI: {midi_path}")
     print(f"Generated manifest: {manifest_path}")
 
+def _load_json_file(path: Path, *, kind: str) -> Any:
+    """Load a JSON file, converting missing/malformed files into actionable exits."""
+    if not path.exists():
+        print(f"Error: Could not find {kind} at {path}")
+        sys.exit(1)
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as exc:
+        print(f"Error: {path} is not valid JSON ({exc}).")
+        sys.exit(1)
+    if not isinstance(data, dict):
+        print(f"Error: {path} must contain a JSON object at the top level, got {type(data).__name__}.")
+        sys.exit(1)
+    return data
+
+
+def _print_timeline(title: str, events: list) -> None:
+    """Print a structural timeline as its labeled segments, not just a count."""
+    print(f"\n--- {title} ---")
+    if not events:
+        print("  (no segments)")
+        return
+    for event in events:
+        start = event.get("start_time")
+        end = event.get("end_time")
+        label = event.get("label")
+        print(f"  {start:>5.1f} -> {end:<5.1f} : {label}")
+
+
 def handle_inspect(args: argparse.Namespace) -> None:
     """Handles the 'inspect' CLI command."""
     manifest_path = Path(args.file)
-    if not manifest_path.exists():
-        print(f"Error: Could not find manifest at {args.file}")
+    data = _load_json_file(manifest_path, kind="manifest")
+
+    required_keys = ("run_id", "sb_stats", "structure")
+    missing = [key for key in required_keys if key not in data]
+    if missing:
+        print(
+            f"Error: {manifest_path} is not a valid run manifest "
+            f"(missing field(s): {', '.join(missing)})."
+        )
         sys.exit(1)
-        
-    with open(manifest_path, "r") as f:
-        data = json.load(f)
-        
+
     print(f"\n=== Inspection Report for Run: {data.get('run_id')} ===")
-    
+
     # --- SB Math Diagnostics ---
     sb = data.get("sb_stats", {})
     print("\n--- Schrödinger Bridge Health ---")
     status = "🟢 Converged" if sb.get("converged") else "🔴 FAILED"
     print(f"Status:      {status} (in {sb.get('iterations_run')} iterations)")
     print(f"Max Delta:   {sb.get('final_max_delta')}")
-    print(f"Entropy:     {sb.get('effective_entropy'):.4f} (Lower = More Confident)")
+    entropy = sb.get("effective_entropy")
+    entropy_display = f"{entropy:.4f}" if isinstance(entropy, (int, float)) else "n/a"
+    print(f"Entropy:     {entropy_display} (Lower = More Confident)")
     print(f"Pruned dead: {sb.get('pruned_nodes')} nodes")
     print(f"Layer sizes: {sb.get('layer_sizes')}")
 
     # --- Structural Timelines ---
-    structure = data.get("structural_stats", {})
+    structure = data.get("structure", {})
+    _print_timeline("Key Timeline", structure.get("key_timeline", []))
+    _print_timeline("Chord Timeline", structure.get("chord_timeline", []))
+    _print_timeline("Role Timeline", structure.get("role_timeline", []))
+    _print_timeline("Groove Timeline", structure.get("groove_timeline", []))
+
+    print("\n--- Boundaries ---")
+    boundaries = structure.get("boundaries", [])
+    if boundaries:
+        print("  " + ", ".join(f"{beat:.1f}" for beat in boundaries))
+    else:
+        print("  (none)")
+
     print("\n--- Tension Arc ---")
     for time_val, tension in structure.get("tension_curve", []):
         bar = "█" * int(tension * 20)
-        print(f"Beat {time_val:04.1f}: {bar} ({tension})")
+        print(f"Beat {time_val:04.1f}: {bar} ({tension:.3f})")
     print("=========================================================\n")
 
 
 def handle_export(args: argparse.Namespace) -> None:
     """Handle the export command by rendering a serialized Score to MIDI."""
     score_path = Path(args.file)
-    if not score_path.exists():
-        print(f"Error: Could not find score file at {args.file}")
+    data = _load_json_file(score_path, kind="score file")
+
+    try:
+        score = Score.from_dict(data)
+    except ScoreValidationError as exc:
+        print(f"Error: {score_path} is not a valid score file ({exc}).")
         sys.exit(1)
 
-    with score_path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    score = Score.from_dict(data)
     edo = _build_edo(args)
     output_path = Path(args.out) if args.out else score_path.with_suffix(".mid")
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -290,6 +344,12 @@ def main() -> None:
         help="Treat the named symbolic track as percussion; repeatable.",
     )
     gen_parser.add_argument("--out", type=str, default="./outputs")
+    gen_parser.add_argument(
+        "--prior-bundle",
+        type=str,
+        default=None,
+        help="Path to a trained prior artifact bundle (requires optional [ml] extra).",
+    )
     gen_parser.set_defaults(func=handle_generate)
 
     ins_parser = subparsers.add_parser("inspect", help="Inspect diagnostics")

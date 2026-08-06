@@ -1,7 +1,15 @@
 import unittest
 from dataclasses import FrozenInstanceError
 
-from aimusic.core.core_types import BeatState, Edge, EndpointDistribution, Layer, NoteEvent, Score
+from aimusic.core.core_types import (
+    BeatState,
+    Edge,
+    EndpointDistribution,
+    Layer,
+    NoteEvent,
+    Score,
+    ScoreValidationError,
+)
 from aimusic.core.vocab import DEFAULT_VOCABULARIES
 
 
@@ -201,6 +209,94 @@ class TestCoreTypeImmutability(unittest.TestCase):
         state = BeatState(0, 0, 0, 0, 0, 0, 0, 0)
         with self.assertRaises(FrozenInstanceError):
             state.beat_in_bar = 1
+
+
+class TestNoteEventFromDict(unittest.TestCase):
+    def test_round_trips_through_to_dict(self):
+        event = NoteEvent(ton=0, toff=120, h=7, v=0.75, e=(0.1, 0.2), track="lead")
+
+        self.assertEqual(NoteEvent.from_dict(event.to_dict()), event)
+
+    def test_applies_defaults_for_optional_fields(self):
+        event = NoteEvent.from_dict({"ton": 0, "toff": 10, "h": 0, "v": 0.5})
+
+        self.assertEqual(event.e, ())
+        self.assertEqual(event.track, "default")
+
+    def test_rejects_missing_required_field_with_actionable_message(self):
+        with self.assertRaisesRegex(ScoreValidationError, "toff"):
+            NoteEvent.from_dict({"ton": 0, "h": 0, "v": 0.5})
+
+    def test_rejects_wrong_type_field(self):
+        with self.assertRaisesRegex(ScoreValidationError, "'ton'"):
+            NoteEvent.from_dict({"ton": "0", "toff": 10, "h": 0, "v": 0.5})
+
+    def test_rejects_inconsistent_duration_ticks(self):
+        payload = {"ton": 0, "toff": 120, "h": 0, "v": 0.5, "duration_ticks": 999}
+        with self.assertRaisesRegex(ScoreValidationError, "duration_ticks"):
+            NoteEvent.from_dict(payload)
+
+    def test_rejects_non_mapping_payload(self):
+        with self.assertRaises(ScoreValidationError):
+            NoteEvent.from_dict([1, 2, 3])  # type: ignore[arg-type]
+
+    def test_propagates_domain_validation_such_as_toff_le_ton(self):
+        with self.assertRaises(ScoreValidationError):
+            NoteEvent.from_dict({"ton": 10, "toff": 10, "h": 0, "v": 0.5})
+
+
+class TestScoreFromDict(unittest.TestCase):
+    def test_round_trips_for_representative_multitrack_score(self):
+        score = Score(
+            note_events=(
+                NoteEvent(0, 120, 0, 0.7, e=(0.1,), track="bass"),
+                NoteEvent(120, 240, 4, 0.8, track="lead"),
+                NoteEvent(0, 60, -3, 0.5, track="drums"),
+            ),
+            ticks_per_beat=240,
+            tempo_bpm=110.0,
+        )
+
+        self.assertEqual(Score.from_dict(score.to_dict()), score)
+
+    def test_round_trips_empty_score(self):
+        score = Score()
+
+        self.assertEqual(Score.from_dict(score.to_dict()), score)
+
+    def test_applies_defaults_when_optional_fields_absent(self):
+        score = Score.from_dict({"note_events": []})
+
+        self.assertEqual(score.ticks_per_beat, 480)
+        self.assertEqual(score.tempo_bpm, 120.0)
+
+    def test_rejects_missing_note_events_field(self):
+        with self.assertRaisesRegex(ScoreValidationError, "note_events"):
+            Score.from_dict({"ticks_per_beat": 480})
+
+    def test_rejects_event_count_mismatch(self):
+        payload = {
+            "note_events": [NoteEvent(0, 10, 0, 0.5).to_dict()],
+            "event_count": 5,
+        }
+        with self.assertRaisesRegex(ScoreValidationError, "event_count"):
+            Score.from_dict(payload)
+
+    def test_rejects_track_event_counts_mismatch(self):
+        payload = {
+            "note_events": [NoteEvent(0, 10, 0, 0.5, track="lead").to_dict()],
+            "track_event_counts": {"bass": 1},
+        }
+        with self.assertRaisesRegex(ScoreValidationError, "track_event_counts"):
+            Score.from_dict(payload)
+
+    def test_rejects_non_list_note_events(self):
+        with self.assertRaises(ScoreValidationError):
+            Score.from_dict({"note_events": "not-a-list"})
+
+    def test_rejects_malformed_note_event_within_score(self):
+        with self.assertRaises(ScoreValidationError):
+            Score.from_dict({"note_events": [{"ton": 0, "toff": 10, "h": 0}]})
 
 
 if __name__ == "__main__":

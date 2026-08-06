@@ -44,6 +44,27 @@ def _format_token(field_name: str, token_id: int, label: str | None) -> str:
     return f"{field_name}={label}[{token_id}]"
 
 
+class ScoreValidationError(ValueError):
+    """Raised when a serialized score/note payload is malformed or inconsistent."""
+
+def _require_mapping(name: str, value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ScoreValidationError(f"{name} must be a JSON object, got {type(value).__name__}.")
+    return value
+
+
+def _require_key(data: dict[str, object], key: str, context: str) -> object:
+    if key not in data:
+        raise ScoreValidationError(f"{context} is missing required field '{key}'.")
+    return data[key]
+
+
+def _require_list(name: str, value: object) -> list:
+    if not isinstance(value, list):
+        raise ScoreValidationError(f"{name} must be a JSON array, got {type(value).__name__}.")
+    return value
+
+
 @dataclass(frozen=True)
 class BeatState:
     """Canonical beat-level structural state.
@@ -217,6 +238,48 @@ class NoteEvent:
             f"e={list(self.e)})"
         )
 
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "NoteEvent":
+        """Deserialize a note event, validating structure with actionable errors."""
+        data = _require_mapping("NoteEvent payload", data)
+
+        ton = _require_key(data, "ton", "NoteEvent payload")
+        toff = _require_key(data, "toff", "NoteEvent payload")
+        h = _require_key(data, "h", "NoteEvent payload")
+        v = _require_key(data, "v", "NoteEvent payload")
+        e = data.get("e", [])
+        track = data.get("track", "default")
+
+        if not isinstance(ton, int) or isinstance(ton, bool):
+            raise ScoreValidationError(f"NoteEvent field 'ton' must be an int, got {type(ton).__name__}.")
+        if not isinstance(toff, int) or isinstance(toff, bool):
+            raise ScoreValidationError(f"NoteEvent field 'toff' must be an int, got {type(toff).__name__}.")
+        if not isinstance(h, int) or isinstance(h, bool):
+            raise ScoreValidationError(f"NoteEvent field 'h' must be an int, got {type(h).__name__}.")
+        if not isinstance(v, (int, float)) or isinstance(v, bool):
+            raise ScoreValidationError(f"NoteEvent field 'v' must be a number, got {type(v).__name__}.")
+        if not isinstance(e, list):
+            raise ScoreValidationError(f"NoteEvent field 'e' must be a list, got {type(e).__name__}.")
+        if not isinstance(track, str):
+            raise ScoreValidationError(f"NoteEvent field 'track' must be a string, got {type(track).__name__}.")
+
+        if "duration_ticks" in data:
+            duration_ticks = data["duration_ticks"]
+            if not isinstance(duration_ticks, int) or isinstance(duration_ticks, bool):
+                raise ScoreValidationError(
+                    f"NoteEvent field 'duration_ticks' must be an int, got {type(duration_ticks).__name__}."
+                )
+            if duration_ticks != toff - ton:
+                raise ScoreValidationError(
+                    "NoteEvent field 'duration_ticks' "
+                    f"({duration_ticks}) does not match toff - ton ({toff - ton})."
+                )
+
+        try:
+            return cls(ton=ton, toff=toff, h=h, v=float(v), e=tuple(float(x) for x in e), track=track)
+        except (TypeError, ValueError) as exc:
+            raise ScoreValidationError(f"NoteEvent payload failed validation: {exc}") from exc
+
 
 @dataclass(frozen=True)
 class Score:
@@ -293,6 +356,41 @@ class Score:
             f"tracks={{{track_counts}}}, "
             f"preview=[{preview_events}])"
         )
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "Score":
+        """Deserialize a score, validating structure with actionable errors."""
+        data = _require_mapping("Score payload", data)
+
+        raw_events = _require_list("Score field 'note_events'", _require_key(data, "note_events", "Score payload"))
+        note_events = tuple(
+            NoteEvent.from_dict(_require_mapping(f"Score note_events[{index}]", item))
+            for index, item in enumerate(raw_events)
+        )
+
+        kwargs: dict[str, object] = {"note_events": note_events}
+        if "ticks_per_beat" in data:
+            kwargs["ticks_per_beat"] = data["ticks_per_beat"]
+        if "tempo_bpm" in data:
+            kwargs["tempo_bpm"] = data["tempo_bpm"]
+
+        try:
+            score = cls(**kwargs)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise ScoreValidationError(f"Score payload failed validation: {exc}") from exc
+
+        if "event_count" in data and data["event_count"] != len(score):
+            raise ScoreValidationError(
+                f"Score field 'event_count' ({data['event_count']}) does not match "
+                f"the number of note_events ({len(score)})."
+            )
+        if "track_event_counts" in data and data["track_event_counts"] != score.track_event_counts():
+            raise ScoreValidationError(
+                f"Score field 'track_event_counts' ({data['track_event_counts']}) does not match "
+                f"the recomputed per-track counts ({score.track_event_counts()})."
+            )
+
+        return score
 
 
 @dataclass(frozen=True)
