@@ -1,3 +1,4 @@
+import math
 from typing import Tuple
 from aimusic.core.config import EDOConfig, MicrotonalRendering
 
@@ -34,31 +35,42 @@ class EDO:
             A tuple containing the MIDI note number and the pitch bend value.
             The pitch bend is an integer from -8192 to 8191.
         """
-        if self.config.n == 12:
-            # For 12-EDO, mapping is direct
-            return (int(self.config.base_tuning + h), 0)
+        if not isinstance(h, int) or isinstance(h, bool):
+            raise TypeError("h must be an int measured in EDO steps.")
 
         if self.config.microtonal_rendering_method == MicrotonalRendering.MTS:
-            midi_note_float = self.config.base_tuning + h * (12 / self.config.n)
-            return (int(round(midi_note_float)), 0)
+            anchor_midi_note = math.floor(self.config.base_tuning + 0.5)
+            midi_note = anchor_midi_note + h
+            target_midi_pitch = self.config.base_tuning + h * (12.0 / self.config.n)
+            if not 0 <= midi_note <= 127 or not 0.0 <= target_midi_pitch < 128.0:
+                raise ValueError(
+                    f"EDO pitch height {h} maps outside the MTS tuning range."
+                )
+            return (midi_note, 0)
 
-        # MPE rendering
-        midi_note_float = self.config.base_tuning + h * (12 / self.config.n)
-        nearest_midi_note = round(midi_note_float)
-        
-        pitch_diff_cents = (midi_note_float - nearest_midi_note) * 100
-        
-        # Calculate pitch bend value
-        bend_range_cents = self.config.pitch_bend_range * 100
-        bend_fraction = pitch_diff_cents / bend_range_cents
-        
-        # Clamp bend_fraction to [-0.5, 0.5] to stay within the nearest note
-        bend_fraction = max(-0.5, min(0.5, bend_fraction))
+        # MPE rendering. Choose the nearest MIDI key and encode the remaining
+        # fractional semitone exactly as a channel pitch bend.
+        target_midi_pitch = self.config.base_tuning + h * (12.0 / self.config.n)
+        nearest_midi_note = math.floor(target_midi_pitch + 0.5)
+        if nearest_midi_note < 0 or nearest_midi_note > 127:
+            raise ValueError(
+                f"EDO pitch height {h} maps outside the MIDI note range: "
+                f"{target_midi_pitch:.6f}."
+            )
 
-        # Pitch bend is from -8192 to 8191
-        pitch_bend = int(bend_fraction * 8191 * 2)
+        semitone_offset = target_midi_pitch - nearest_midi_note
+        bend_fraction = semitone_offset / self.config.pitch_bend_range
+        if abs(bend_fraction) > 1.0:
+            raise ValueError(
+                f"Pitch-bend range {self.config.pitch_bend_range} cannot represent "
+                f"EDO pitch height {h}."
+            )
 
-        return (int(nearest_midi_note), pitch_bend)
+        # MIDI pitch bend is asymmetric: -8192 is full-scale down and
+        # +8191 is full-scale up.
+        scale = 8191 if bend_fraction >= 0.0 else 8192
+        pitch_bend = max(-8192, min(8191, round(bend_fraction * scale)))
+        return (nearest_midi_note, pitch_bend)
 
     def __repr__(self) -> str:
         return f"EDO(n={self.config.n})"

@@ -7,7 +7,12 @@ _logger = logging.getLogger(__name__)
 
 from aimusic.core.config import DecodeConfig
 from aimusic.core.core_types import BeatState, NoteEvent, Score
-from aimusic.core.vocab import ChordToken, GrooveToken, Vocabularies
+from aimusic.core.vocab import (
+    ChordToken,
+    GrooveToken,
+    Vocabularies,
+    validate_vocabulary_compatibility,
+)
 from aimusic.theory.tonal import chord_pitch_classes, get_fifth_steps, pc
 
 
@@ -131,17 +136,19 @@ def _family_offsets(groove: GrooveToken, subbeats_per_beat: int) -> Tuple[int, .
 
 
 def _fit_pitch_to_register(pitch_pc: int, register: tuple[int, int], edo: int) -> int:
+    if not isinstance(edo, int) or isinstance(edo, bool) or edo < 1:
+        raise ValueError("edo must be a positive integer.")
     low, high = register
-    candidate = low + ((pitch_pc - low) % edo)
-    while candidate < low:
-        candidate += edo
-    while candidate > high:
-        candidate -= edo
-    if candidate < low:
-        candidate += edo
-    if candidate > high:
-        candidate = high - ((high - pitch_pc) % edo)
-    return min(max(candidate, low), high)
+    normalized_pc = pitch_pc % edo
+    candidates = tuple(
+        pitch for pitch in range(low, high + 1) if pitch % edo == normalized_pc
+    )
+    if not candidates:
+        raise ValueError(
+            f"register {register} contains no pitch with class {normalized_pc} "
+            f"in {edo}-EDO."
+        )
+    return candidates[0]
 
 
 def _nearest_pitch(
@@ -196,12 +203,28 @@ def _head_pitch_class(state: BeatState, vocabularies: Vocabularies, edo: int) ->
     return pc(chord.root_pc + interval, edo)
 
 
-def _clamp_leap(prev_pitch: Optional[int], next_pitch: int, max_leap: int) -> int:
+def _clamp_leap(
+    prev_pitch: Optional[int],
+    next_pitch: int,
+    max_leap: int,
+    *,
+    edo: int,
+    register: tuple[int, int],
+) -> int:
     if prev_pitch is None:
         return next_pitch
     if abs(next_pitch - prev_pitch) <= max_leap:
         return next_pitch
-    return prev_pitch + max_leap if next_pitch > prev_pitch else prev_pitch - max_leap
+    pitch_class = next_pitch % edo
+    compatible = tuple(
+        pitch
+        for pitch in range(register[0], register[1] + 1)
+        if pitch % edo == pitch_class and abs(pitch - prev_pitch) <= max_leap
+    )
+    if compatible:
+        return min(compatible, key=lambda pitch: (abs(pitch - prev_pitch), pitch))
+    # Never invent a different pitch class merely to satisfy the soft leap cap.
+    return next_pitch
 
 
 def _append_event(
@@ -263,6 +286,7 @@ def generate_bass_events(
     ticks_per_beat: int = DEFAULT_TICKS_PER_BEAT,
     include_terminal_state: bool = False,
 ) -> Tuple[NoteEvent, ...]:
+    validate_vocabulary_compatibility(vocabularies, edo)
     states = _decode_states(path, include_terminal_state=include_terminal_state)
     resolved_decode = DecodeConfig() if decode_config is None else decode_config
     events: list[NoteEvent] = []
@@ -311,6 +335,7 @@ def generate_comping_events(
     ticks_per_beat: int = DEFAULT_TICKS_PER_BEAT,
     include_terminal_state: bool = False,
 ) -> Tuple[NoteEvent, ...]:
+    validate_vocabulary_compatibility(vocabularies, edo)
     states = _decode_states(path, include_terminal_state=include_terminal_state)
     resolved_decode = DecodeConfig() if decode_config is None else decode_config
     events: list[NoteEvent] = []
@@ -373,6 +398,7 @@ def generate_lead_events(
     ticks_per_beat: int = DEFAULT_TICKS_PER_BEAT,
     include_terminal_state: bool = False,
 ) -> Tuple[NoteEvent, ...]:
+    validate_vocabulary_compatibility(vocabularies, edo)
     states = _decode_states(path, include_terminal_state=include_terminal_state)
     resolved_decode = DecodeConfig() if decode_config is None else decode_config
     events: list[NoteEvent] = []
@@ -391,7 +417,13 @@ def generate_lead_events(
         pitch = _nearest_pitch(
             prev_pitch, (head_pc,), resolved_decode.lead_register, edo
         )
-        pitch = _clamp_leap(prev_pitch, pitch, resolved_decode.max_lead_leap_steps)
+        pitch = _clamp_leap(
+            prev_pitch,
+            pitch,
+            resolved_decode.max_lead_leap_steps,
+            edo=edo,
+            register=resolved_decode.lead_register,
+        )
         ton = beat_index * ticks_per_beat
         duration = ticks_per_beat if state.boundary_lvl > 0 else ticks_per_beat // 2
         _append_event(
@@ -463,6 +495,7 @@ def decode_path_to_score(
     include_terminal_state: bool = False,
 ) -> Score:
     """Decode a BeatState path into a multi-track symbolic score."""
+    validate_vocabulary_compatibility(vocabularies, edo)
     states = _decode_states(path, include_terminal_state=include_terminal_state)
     resolved_decode = DecodeConfig() if decode_config is None else decode_config
     events = (

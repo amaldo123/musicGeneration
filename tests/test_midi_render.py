@@ -4,8 +4,14 @@ import unittest
 import mido
 
 from aimusic.core.config import EDOConfig, MicrotonalRendering
+from aimusic.core.core_types import NoteEvent, Score
 from aimusic.theory.edo import EDO
-from aimusic.render.midi_render import SymbolicNote, render_midi, summarize_midi
+from aimusic.render.midi_render import (
+    DEFAULT_DRUM_CHANNEL,
+    SymbolicNote,
+    render_midi,
+    summarize_midi,
+)
 
 class TestMidiRender(unittest.TestCase):
     def setUp(self):
@@ -72,12 +78,15 @@ class TestMidiRender(unittest.TestCase):
         self.assertEqual(detuned_note_channel, bend_channel)
     
     def test_mts_rendering_produces_sysex_and_notes(self):
-        """Tests that MTS rendering produces a SysEx tuning dump and playable notes."""
+        """MTS uses one MIDI key per EDO step and emits accurate tuning data."""
         config_mts = EDOConfig(
             n=19, base_tuning=60, pitch_bend_range=48, microtonal_rendering_method=MicrotonalRendering.MTS
         )
         edo_mts = EDO(config_mts)
-        notes = [SymbolicNote(pitch_height=0, start_time=0.0, end_time=1.0)]
+        notes = [
+            SymbolicNote(pitch_height=0, start_time=0.0, end_time=1.0),
+            SymbolicNote(pitch_height=1, start_time=1.0, end_time=2.0),
+        ]
 
         render_midi(notes, edo_mts, self.output_path)
 
@@ -86,9 +95,44 @@ class TestMidiRender(unittest.TestCase):
         sysex_events = [msg for msg in all_msgs if msg.type == "sysex"]
         note_on_events = [msg for msg in all_msgs if msg.type == "note_on"]
 
-        self.assertGreater(len(sysex_events), 0, "MTS SysEx tuning dump should be present")
-        self.assertEqual(len(note_on_events), 1)
-        self.assertEqual(note_on_events[0].note, 60)
+        self.assertEqual(len(sysex_events), 1)
+        self.assertEqual([event.note for event in note_on_events], [60, 61])
+
+        data = list(sysex_events[0].data)
+        self.assertEqual(data[:5], [0x7E, 0x7F, 0x08, 0x01, 0x00])
+        self.assertEqual(len(data), 406)
+        checksum = 0
+        for value in data[:-1]:
+            checksum ^= value
+        self.assertEqual(data[-1], checksum)
+
+        entry_offset = 5 + 16 + 60 * 3
+        root_entry = data[entry_offset:entry_offset + 3]
+        step_entry = data[entry_offset + 3:entry_offset + 6]
+
+        def decoded_pitch(entry):
+            return entry[0] + (((entry[1] << 7) | entry[2]) / 16384.0)
+
+        self.assertAlmostEqual(decoded_pitch(root_entry), 60.0, places=6)
+        self.assertAlmostEqual(decoded_pitch(step_entry), 60.0 + 12.0 / 19.0, places=4)
+
+    def test_19_edo_drum_notes_remain_general_midi_notes(self):
+        score = Score(
+            note_events=(
+                NoteEvent(0, 120, 36, 1.0, track="drums"),
+            )
+        )
+
+        render_midi(score, self.edo_19, self.output_path)
+
+        note_ons = [
+            message
+            for track in mido.MidiFile(self.output_path).tracks
+            for message in track
+            if message.type == "note_on" and message.velocity > 0
+        ]
+        self.assertEqual(note_ons[0].note, 36)
+        self.assertEqual(note_ons[0].channel, DEFAULT_DRUM_CHANNEL)
 
     def test_expressive_controls_rendered(self):
         """Tests that MPE Timbre (CC74) and Pressure (Aftertouch) are correctly written."""

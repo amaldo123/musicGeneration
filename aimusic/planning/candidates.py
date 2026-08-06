@@ -9,7 +9,13 @@ from aimusic.core.core_types import BeatState
 from aimusic.scoring.gttm_features import beats_per_bar, is_strong_beat
 from aimusic.scoring.priors import NullPrior, Prior, PriorContext, PriorQuery, prior_logps
 from aimusic.theory.tonal import get_fifth_steps, nearest_roots
-from aimusic.core.vocab import ChordToken, DEFAULT_VOCABULARIES, GrooveToken, Vocabularies
+from aimusic.core.vocab import (
+    ChordToken,
+    DEFAULT_VOCABULARIES,
+    GrooveToken,
+    Vocabularies,
+    validate_vocabulary_compatibility,
+)
 
 
 LEGAL_ROLE_SUCCESSORS: Mapping[str, frozenset[str]] = {
@@ -394,12 +400,16 @@ def propose_key_ids(
     next_boundary_lvl: int,
     next_role_id: int,
     vocabularies: Vocabularies,
+    edo: Optional[int] = None,
 ) -> Tuple[int, ...]:
-    edo = _edo_size(vocabularies)
+    resolved_edo = _edo_size(vocabularies) if edo is None else edo
+    validate_vocabulary_compatibility(vocabularies, resolved_edo)
     role_label = vocabularies.roles.token_for_id(next_role_id).label
     proposals = [prev_state.key_id]
     if next_boundary_lvl >= 2 or role_label in {"change", "cad"}:
-        for root_pc in nearest_roots(_key_root(prev_state, vocabularies), edo, limit=2):
+        for root_pc in nearest_roots(
+            _key_root(prev_state, vocabularies), resolved_edo, limit=2
+        ):
             if vocabularies.keys.has_id(root_pc):
                 proposals.append(root_pc)
     return tuple(dict.fromkeys(proposals))
@@ -417,16 +427,18 @@ def propose_chord_ids(
     context: Optional[PriorContext],
     vocabularies: Vocabularies,
     top_k_prior: int = 3,
+    edo: Optional[int] = None,
 ) -> Tuple[int, ...]:
-    edo = _edo_size(vocabularies)
+    resolved_edo = _edo_size(vocabularies) if edo is None else edo
+    validate_vocabulary_compatibility(vocabularies, resolved_edo)
     role_label = vocabularies.roles.token_for_id(next_role_id).label
     prev_chord = _chord_token_by_id(prev_state.chord_id, vocabularies)
     key_root = vocabularies.keys.token_for_id(key_id).root_pc
-    dominant_root = (key_root + get_fifth_steps(edo)) % edo
+    dominant_root = (key_root + get_fifth_steps(resolved_edo)) % resolved_edo
 
     proposals = [prev_state.chord_id]
     proposals.extend(_chord_ids_for_root(prev_chord.root_pc, _qualities_for_role(role_label), vocabularies))
-    for root_pc in nearest_roots(prev_chord.root_pc, edo, limit=2):
+    for root_pc in nearest_roots(prev_chord.root_pc, resolved_edo, limit=2):
         proposals.extend(_chord_ids_for_root(root_pc, _qualities_for_role(role_label), vocabularies))
 
     if role_label == "cad":
@@ -503,6 +515,7 @@ def _candidate_generator(
     prior: Prior,
     context: Optional[PriorContext],
     rng: np.random.Generator,
+    edo: int,
 ) -> Iterator[BeatState]:
     """Yields candidate states iteratively to avoid combinatorial memory explosions."""
     
@@ -516,9 +529,14 @@ def _candidate_generator(
         for bound_lvl in _shuffled(propose_boundary_levels(prev_state, meter_id, beat_in_bar, vocabs)):
             for role_id in _shuffled(propose_role_ids(prev_state, meter_id, beat_in_bar, bound_lvl, vocabs)):
                 for groove_id in _shuffled(propose_groove_ids(prev_state, bound_lvl, role_id, vocabs)):
-                    for key_id in _shuffled(propose_key_ids(prev_state, bound_lvl, role_id, vocabs)):
+                    for key_id in _shuffled(
+                        propose_key_ids(
+                            prev_state, bound_lvl, role_id, vocabs, edo=edo
+                        )
+                    ):
                         for chord_id in _shuffled(propose_chord_ids(
-                            prev_state, key_id, meter_id, beat_in_bar, bound_lvl, role_id, groove_id, prior, context, vocabs
+                            prev_state, key_id, meter_id, beat_in_bar, bound_lvl,
+                            role_id, groove_id, prior, context, vocabs, edo=edo
                         )):
                             for head_id in _shuffled(propose_head_ids(chord_id, meter_id, beat_in_bar, bound_lvl, role_id, vocabs)):
                                 yield BeatState(
@@ -542,6 +560,7 @@ def get_valid_next_states(
     vocabularies: Optional[Vocabularies] = None,
     prior: Optional[Prior] = None,
     context: Optional[PriorContext] = None,
+    edo: Optional[int] = None,
 ) -> CandidateGenerationResult:
     """Generate up to D_max legal BeatState successors for one source state."""
     
@@ -549,13 +568,21 @@ def get_valid_next_states(
     resolved_vocabs = _resolved_vocabs(vocabularies)
     resolved_style = _resolved_style(style_config)
     resolved_prior = _resolved_prior(prior)
+    resolved_edo = _edo_size(resolved_vocabs) if edo is None else edo
+    validate_vocabulary_compatibility(resolved_vocabs, resolved_edo)
 
     accepted: set[BeatState] = set()
     rejections: list[CandidateRejection] = []
 
     # 2. Utilize the generator to lazily produce candidates
     candidate_gen = _candidate_generator(
-        prev_state, resolved_style, resolved_vocabs, resolved_prior, context, rng
+        prev_state,
+        resolved_style,
+        resolved_vocabs,
+        resolved_prior,
+        context,
+        rng,
+        resolved_edo,
     )
 
     # 3. Consume generator, breaking immediately upon reaching D_max capacity

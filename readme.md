@@ -198,6 +198,10 @@ Useful flags:
 - `--sample-path` switches from MAP extraction to sampled bridge-path extraction.
 - `--drum-density`, `--bass-density`, `--comping-density`, and `--lead-density` control decode density.
 - `--edo`, `--pitch-bend-range`, and `--rendering-method` control MIDI rendering behavior.
+- MPE export uses per-note pitch bends; MTS export uses a byte-correct bulk tuning dump.
+- Built-in audio previews reproduce MPE pitch bends. MTS previews are disabled with an
+  actionable message because preview converters cannot guarantee MTS support; audition
+  downloaded MTS files with an MTS-compatible synthesizer.
 - `--track-program track=program` overrides the General MIDI program for a symbolic track.
 - `--drum-track track` forces a symbolic track onto the percussion channel.
 
@@ -389,9 +393,10 @@ The current implementation progress is tracked below.
 - [x] Implement the Schrödinger Bridge solver on sparse edges using the NumPy backend.
 - [ ] Implement Method A plan, then Method B.
 - [ ] Implement decoder components for drums, bass, comping, and lead.
-- [ ] Implement MIDI rendering.
+- [x] Implement MIDI rendering.
   - [x] 12-EDO direct mapping implemented.
-  - [ ] 19-EDO MPE support pending.
+  - [x] 19-EDO MPE rendering and cent-accuracy validation implemented.
+  - [x] MTS bulk tuning dump rendering and frequency validation implemented.
 - [ ] Add the placeholder `NeuralPrior` seam and artifact contract.
 - [ ] Integrate the external neural prior implementation when available.
 - [ ] Add section-wise Schrödinger Bridge generation and richer diagnostics.

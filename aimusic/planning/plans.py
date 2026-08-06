@@ -21,7 +21,7 @@ from aimusic.core.config import (
 )
 from aimusic.core.core_types import BeatState, EndpointDistribution, Layer, Score
 from aimusic.core.rng import RNGKey, random_unit
-from aimusic.core.vocab import DEFAULT_VOCABULARIES, Vocabularies, build_default_vocabularies
+from aimusic.core.vocab import TonalContext, Vocabularies, build_tonal_context
 from aimusic.decode import decode_path_to_score
 from aimusic.planning.graph import SparseGraph, build_sparse_graph
 from aimusic.render import render_midi
@@ -181,6 +181,7 @@ class MethodAPlanResult:
     """Full output of a Method A planning pass."""
 
     run_config: MethodARunConfig
+    tonal_context: TonalContext
     vocabularies: Vocabularies
     endpoints: MethodAEndpoints
     graph: SparseGraph
@@ -205,12 +206,13 @@ class ExactBridgeDemoResult:
 def _resolved_vocabs(
     vocabularies: Optional[Vocabularies],
     style_config: StyleConfig,
+    edo: int,
 ) -> Vocabularies:
-    if vocabularies is not None:
-        return vocabularies
-    if style_config == StyleConfig():
-        return DEFAULT_VOCABULARIES
-    return build_default_vocabularies(style_config)
+    return build_tonal_context(
+        edo,
+        style_config,
+        vocabularies=vocabularies,
+    ).vocabularies
 
 
 def _resolved_sb_config(run_config: MethodARunConfig) -> SBConfig:
@@ -486,7 +488,9 @@ def generate_start_endpoint_distribution(
     *,
     vocabularies: Optional[Vocabularies] = None,
 ) -> EndpointDistribution:
-    resolved_vocabs = _resolved_vocabs(vocabularies, run_config.style_config)
+    resolved_vocabs = _resolved_vocabs(
+        vocabularies, run_config.style_config, run_config.edo
+    )
     beat_positions = {meter_id: 0 for meter_id in _meter_ids(run_config.style_config, resolved_vocabs)}
     return _build_endpoint_distribution(
         time_index=0,
@@ -502,7 +506,9 @@ def generate_end_endpoint_distribution(
     *,
     vocabularies: Optional[Vocabularies] = None,
 ) -> EndpointDistribution:
-    resolved_vocabs = _resolved_vocabs(vocabularies, run_config.style_config)
+    resolved_vocabs = _resolved_vocabs(
+        vocabularies, run_config.style_config, run_config.edo
+    )
     beat_positions = {}
     for meter_id in _meter_ids(run_config.style_config, resolved_vocabs):
         beats_per_bar = resolved_vocabs.meters.token_for_id(meter_id).beats_per_bar
@@ -523,7 +529,9 @@ def generate_method_a_endpoints(
     selection_key: Optional[RNGKey] = None,
     sample_endpoints: bool = False,
 ) -> MethodAEndpoints:
-    resolved_vocabs = _resolved_vocabs(vocabularies, run_config.style_config)
+    resolved_vocabs = _resolved_vocabs(
+        vocabularies, run_config.style_config, run_config.edo
+    )
     pi0 = generate_start_endpoint_distribution(run_config, vocabularies=resolved_vocabs)
     piT = generate_end_endpoint_distribution(run_config, vocabularies=resolved_vocabs)
     root_key = RNGKey(seed=run_config.seed) if selection_key is None else selection_key
@@ -554,7 +562,12 @@ def run_method_a(
 ) -> MethodAPlanResult:
     """Run Method A from endpoint planning through SB path extraction."""
     _logger.info(f"Method A: {run_config.total_beats} beats, seed={run_config.seed}")
-    resolved_vocabs = _resolved_vocabs(vocabularies, run_config.style_config)
+    tonal_context = build_tonal_context(
+        run_config.edo,
+        run_config.style_config,
+        vocabularies=vocabularies,
+    )
+    resolved_vocabs = tonal_context.vocabularies
     resolved_sb = _resolved_sb_config(run_config)
     root_key = RNGKey(seed=run_config.seed)
     endpoint_key, graph_key, bridge_key = root_key.split(3)
@@ -624,6 +637,7 @@ def run_method_a(
     )
     return MethodAPlanResult(
         run_config=run_config,
+        tonal_context=tonal_context,
         vocabularies=resolved_vocabs,
         endpoints=aligned_endpoints,
         graph=graph,
@@ -672,12 +686,12 @@ def render_exact_bridge_demo(
         plan_result.path,
         decode_config=resolved_decode,
         vocabularies=plan_result.vocabularies,
-        edo=edo,
+        edo=plan_result.tonal_context.n,
         tempo_bpm=tempo_bpm,
     )
     render_midi(
         score,
-        EDO(EDOConfig(n=edo, base_tuning=0)),
+        EDO(EDOConfig(n=plan_result.tonal_context.n, base_tuning=0)),
         output_path,
     )
     return ExactBridgeDemoResult(
