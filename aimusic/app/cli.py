@@ -210,6 +210,19 @@ def _load_json_file(path: Path, *, kind: str) -> Any:
     return data
 
 
+def _print_timeline(title: str, events: list) -> None:
+    """Print a structural timeline as its labeled segments, not just a count."""
+    print(f"\n--- {title} ---")
+    if not events:
+        print("  (no segments)")
+        return
+    for event in events:
+        start = event.get("start_time")
+        end = event.get("end_time")
+        label = event.get("label")
+        print(f"  {start:>5.1f} -> {end:<5.1f} : {label}")
+
+
 def handle_inspect(args: argparse.Namespace) -> None:
     """Handles the 'inspect' CLI command."""
     manifest_path = Path(args.file)
@@ -240,10 +253,17 @@ def handle_inspect(args: argparse.Namespace) -> None:
 
     # --- Structural Timelines ---
     structure = data.get("structure", {})
-    print("\n--- Structural Timeline ---")
-    for name in ("key_timeline", "chord_timeline", "role_timeline", "groove_timeline"):
-        events = structure.get(name, [])
-        print(f"{name}: {len(events)} segment(s)")
+    _print_timeline("Key Timeline", structure.get("key_timeline", []))
+    _print_timeline("Chord Timeline", structure.get("chord_timeline", []))
+    _print_timeline("Role Timeline", structure.get("role_timeline", []))
+    _print_timeline("Groove Timeline", structure.get("groove_timeline", []))
+
+    print("\n--- Boundaries ---")
+    boundaries = structure.get("boundaries", [])
+    if boundaries:
+        print("  " + ", ".join(f"{beat:.1f}" for beat in boundaries))
+    else:
+        print("  (none)")
 
     print("\n--- Tension Arc ---")
     for time_val, tension in structure.get("tension_curve", []):

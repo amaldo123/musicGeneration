@@ -68,12 +68,28 @@ class TestCliGenerateInspectExportWorkflow(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("Schrödinger Bridge Health", result.stdout)
-        self.assertIn("Structural Timeline", result.stdout)
+        self.assertIn("Key Timeline", result.stdout)
+        self.assertIn("Chord Timeline", result.stdout)
+        self.assertIn("Role Timeline", result.stdout)
+        self.assertIn("Groove Timeline", result.stdout)
+        self.assertIn("Boundaries", result.stdout)
         self.assertIn("Tension Arc", result.stdout)
         # Regression guard: previously read the wrong key and always printed
-        # zero timeline segments / an empty tension arc.
-        self.assertNotIn("key_timeline: 0 segment(s)", result.stdout)
+        # empty/absent timelines and an empty tension arc.
+        self.assertNotIn("(no segments)", result.stdout)
         self.assertRegex(result.stdout, r"Beat \d+\.\d: ")
+
+    def test_inspect_tension_values_are_rounded_not_raw_floats(self) -> None:
+        _, _, manifest_path = self._generate()
+
+        result = _run_cli("inspect", str(manifest_path))
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        # Tension values must render as fixed 3-decimal numbers, never the
+        # long floating-point artifacts (e.g. 0.35000000000000003).
+        for line in result.stdout.splitlines():
+            if line.startswith("Beat "):
+                self.assertRegex(line, r"\(\d\.\d{3}\)$", msg=line)
 
     def test_export_renders_generated_score_without_modification(self) -> None:
         score_path, _, _ = self._generate()
