@@ -39,8 +39,17 @@ class EDO:
             raise TypeError("h must be an int measured in EDO steps.")
 
         if self.config.microtonal_rendering_method == MicrotonalRendering.MTS:
-            midi_note_float = self.config.base_tuning + h * (12.0 / self.config.n)
-            return (int(round(midi_note_float)), 0)
+            # MTS retunes MIDI keys through a static 128-entry tuning table. Map
+            # consecutive EDO steps to consecutive keys so N > 12 does not
+            # collapse distinct pitches onto the same MIDI note number.
+            anchor_key = math.floor(self.config.base_tuning + 0.5)
+            midi_note = anchor_key + h
+            if midi_note < 0 or midi_note > 127:
+                raise ValueError(
+                    f"EDO pitch height {h} maps outside the MIDI note range "
+                    f"for MTS key anchor {anchor_key}."
+                )
+            return (midi_note, 0)
 
         # MPE rendering. Choose the nearest MIDI key and encode the remaining
         # fractional semitone exactly as a channel pitch bend.

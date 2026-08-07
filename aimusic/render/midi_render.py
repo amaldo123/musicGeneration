@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
@@ -191,20 +192,34 @@ def _mts_tuning_sysex(edo: EDO) -> mido.Message:
     """
     n = edo.config.n
     base = edo.config.base_tuning
+    anchor_key = math.floor(base + 0.5)
     name = f"{n}-EDO MTS".encode("ascii")[:16].ljust(16, b"\x00")
 
     data = [0x7E, 0x7F, 0x08, 0x01, 0x00]
     data.extend(name)
 
-    for midi_note in range(128):
-        edo_step = round((midi_note - base) * n / 12)
-        exact_semitones = base + edo_step * 12.0 / n
-        cents_dev = (exact_semitones - midi_note) * 100.0
-        detune = 8192 + round(cents_dev * 8192 / 100)
-        detune = max(0, min(16383, detune))
-        data.extend([midi_note, (detune >> 7) & 0x7F, detune & 0x7F])
+    for midi_key in range(128):
+        target_midi_pitch = base + (midi_key - anchor_key) * (12.0 / n)
+        if target_midi_pitch < 0.0 or target_midi_pitch >= 128.0:
+            data.extend([0x7F, 0x7F, 0x7F])
+            continue
 
-    checksum = (128 - (sum(data) % 128)) % 128
+        semitone = math.floor(target_midi_pitch)
+        fraction = round((target_midi_pitch - semitone) * 16384)
+        if fraction == 16384:
+            semitone += 1
+            fraction = 0
+        if semitone > 127:
+            data.extend([0x7F, 0x7F, 0x7F])
+            continue
+        if semitone == 127 and fraction == 16383:
+            fraction = 16382
+        data.extend([semitone, (fraction >> 7) & 0x7F, fraction & 0x7F])
+
+    checksum = 0
+    for value in data:
+        checksum ^= value
+    checksum &= 0x7F
     data.append(checksum)
 
     return mido.Message("sysex", data=data, time=0)

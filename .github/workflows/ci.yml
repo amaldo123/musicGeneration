@@ -95,4 +95,6 @@ jobs:
 
       - name: Run ML tests
         run: |
+          python -m compileall -q aimusic
+          python -m tests.import_all --include-optional
           python -m pytest tests/test_count_prior.py tests/test_ml_bundle.py tests/test_ml_dataset.py tests/test_ml_train.py tests/test_ml_integration.py -q

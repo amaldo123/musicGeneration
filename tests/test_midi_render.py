@@ -1,3 +1,4 @@
+import math
 import os
 import tempfile
 import unittest
@@ -111,24 +112,60 @@ class TestMidiRender(unittest.TestCase):
             with self.subTest(pitch_height=pitch_height):
                 self.assertLessEqual(cents_error, 0.3)
     
-    def test_mts_rendering_produces_sysex_and_notes(self):
-        """Tests that MTS rendering produces a SysEx tuning dump and playable notes."""
+    def test_mts_rendering_encodes_cent_accurate_frequency_words(self):
+        """Decode MTS bytes and verify that representative notes realize 19-EDO."""
         config_mts = EDOConfig(
             n=19, base_tuning=60, pitch_bend_range=48, microtonal_rendering_method=MicrotonalRendering.MTS
         )
         edo_mts = EDO(config_mts)
-        notes = [SymbolicNote(pitch_height=0, start_time=0.0, end_time=1.0)]
+        pitch_heights = (-19, -7, -1, 0, 1, 7, 18, 19, 31)
+        notes = [
+            SymbolicNote(
+                pitch_height=pitch_height,
+                start_time=float(index),
+                end_time=float(index + 1),
+            )
+            for index, pitch_height in enumerate(pitch_heights)
+        ]
 
         render_midi(notes, edo_mts, self.output_path)
 
         mid = mido.MidiFile(self.output_path)
         all_msgs = [msg for track in mid.tracks for msg in track]
         sysex_events = [msg for msg in all_msgs if msg.type == "sysex"]
-        note_on_events = [msg for msg in all_msgs if msg.type == "note_on"]
+        note_on_events = [
+            msg for msg in all_msgs if msg.type == "note_on" and msg.velocity > 0
+        ]
 
-        self.assertGreater(len(sysex_events), 0, "MTS SysEx tuning dump should be present")
-        self.assertEqual(len(note_on_events), 1)
-        self.assertEqual(note_on_events[0].note, 60)
+        self.assertEqual(len(sysex_events), 1)
+        data = tuple(sysex_events[0].data)
+        self.assertEqual(data[:5], (0x7E, 0x7F, 0x08, 0x01, 0x00))
+        self.assertEqual(len(data), 5 + 16 + (128 * 3) + 1)
+        self.assertTrue(all(0 <= value <= 0x7F for value in data))
+
+        checksum = 0
+        for value in data:
+            checksum ^= value
+        self.assertEqual(checksum, 0)
+
+        self.assertEqual(
+            [message.note for message in note_on_events],
+            [60 + pitch_height for pitch_height in pitch_heights],
+        )
+        entries_offset = 5 + 16
+        for pitch_height, message in zip(pitch_heights, note_on_events):
+            entry_offset = entries_offset + (message.note * 3)
+            semitone, fraction_msb, fraction_lsb = data[entry_offset:entry_offset + 3]
+            fraction = (fraction_msb << 7) | fraction_lsb
+            realized_midi_pitch = semitone + fraction / 16384.0
+            expected_midi_pitch = 60 + pitch_height * (12.0 / 19)
+            realized_frequency = 440.0 * 2.0 ** ((realized_midi_pitch - 69) / 12.0)
+            expected_frequency = 440.0 * 2.0 ** ((expected_midi_pitch - 69) / 12.0)
+            cents_error = abs(
+                1200.0 * math.log2(realized_frequency / expected_frequency)
+            )
+            with self.subTest(pitch_height=pitch_height):
+                self.assertLessEqual(cents_error, 0.01)
 
     def test_19_edo_drum_notes_remain_general_midi_notes(self):
         score = Score(

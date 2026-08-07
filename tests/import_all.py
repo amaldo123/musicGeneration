@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib
 import pkgutil
 
@@ -11,8 +12,8 @@ import aimusic
 OPTIONAL_MODULE_PREFIXES = ("aimusic.ml.",)
 
 
-def import_all_executable_modules() -> tuple[str, ...]:
-    """Import executable surfaces available from the base installation."""
+def import_all_executable_modules(*, include_optional: bool = False) -> tuple[str, ...]:
+    """Import executable surfaces available in the selected installation."""
     module_names = tuple(
         sorted(
             module.name
@@ -20,7 +21,7 @@ def import_all_executable_modules() -> tuple[str, ...]:
                 aimusic.__path__,
                 prefix=f"{aimusic.__name__}.",
             )
-            if not module.name.startswith(OPTIONAL_MODULE_PREFIXES)
+            if include_optional or not module.name.startswith(OPTIONAL_MODULE_PREFIXES)
         )
     )
     for module_name in module_names:
@@ -30,5 +31,12 @@ def import_all_executable_modules() -> tuple[str, ...]:
 
 
 if __name__ == "__main__":
-    imported = import_all_executable_modules()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--include-optional",
+        action="store_true",
+        help="also import modules whose optional dependencies are installed",
+    )
+    args = parser.parse_args()
+    imported = import_all_executable_modules(include_optional=args.include_optional)
     print(f"Imported {len(imported)} executable modules.")
