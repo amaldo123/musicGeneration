@@ -2,7 +2,7 @@ import unittest
 
 from aimusic.core.config import StyleConfig
 from aimusic.core.vocab import DEFAULT_VOCABULARIES, build_default_vocabularies
-from aimusic.ml.vocab_export import export_vocabularies_json
+from aimusic.ml.vocab_export import export_vocabularies_json, vocabularies_from_export
 
 
 class TestVocabExport(unittest.TestCase):
@@ -46,6 +46,15 @@ class TestVocabExport(unittest.TestCase):
             token = DEFAULT_VOCABULARIES.chords.token_for_id(chord_entry["id"])
             self.assertEqual(token.label, chord_entry["label"])
             self.assertEqual(token.root_pc, chord_entry["root_pc"])
+
+    def test_default_edo_derived_sizes_round_trip_as_none(self):
+        style = StyleConfig()
+        exported = export_vocabularies_json(DEFAULT_VOCABULARIES, style)
+
+        _, restored = vocabularies_from_export(exported)
+
+        self.assertIsNone(restored.chord_vocabulary_size)
+        self.assertIsNone(restored.key_vocabulary_size)
 
 
 if __name__ == "__main__":
