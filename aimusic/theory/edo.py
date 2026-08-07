@@ -39,9 +39,8 @@ class EDO:
             raise TypeError("h must be an int measured in EDO steps.")
 
         if self.config.microtonal_rendering_method == MicrotonalRendering.MTS:
-            raise NotImplementedError(
-                "MTS rendering is deferred; use the supported MPE path."
-            )
+            midi_note_float = self.config.base_tuning + h * (12.0 / self.config.n)
+            return (int(round(midi_note_float)), 0)
 
         # MPE rendering. Choose the nearest MIDI key and encode the remaining
         # fractional semitone exactly as a channel pitch bend.

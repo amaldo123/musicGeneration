@@ -15,7 +15,6 @@ from aimusic.core.config import (
     DecodeConfig,
     EDOConfig,
     MicrotonalRendering,
-    SUPPORTED_MICROTONAL_RENDERING_METHODS,
     StyleConfig,
 )
 from aimusic.core.core_types import Score, ScoreValidationError
@@ -152,7 +151,8 @@ def handle_generate(args: argparse.Namespace) -> None:
         edo=args.edo,
     )
     prior = None
-    if args.prior_bundle:
+    prior_bundle = getattr(args, "prior_bundle", None)
+    if prior_bundle:
         try:
             from aimusic.ml.inference import load_trained_neural_prior
         except ImportError:
@@ -162,7 +162,7 @@ def handle_generate(args: argparse.Namespace) -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
-        prior = load_trained_neural_prior(args.prior_bundle)
+        prior = load_trained_neural_prior(prior_bundle)
     plan_result = run_method_a(run_config, prior=prior)
     score = decode_path_to_score(
         plan_result.path,
@@ -333,7 +333,7 @@ def main() -> None:
     gen_parser.add_argument("--pitch-bend-range", type=int, default=2)
     gen_parser.add_argument(
         "--rendering-method",
-        choices=[method.name for method in SUPPORTED_MICROTONAL_RENDERING_METHODS],
+        choices=[method.name for method in MicrotonalRendering],
         default=MicrotonalRendering.MPE.name,
     )
     gen_parser.add_argument(
@@ -381,7 +381,7 @@ def main() -> None:
     )
     exp_parser.add_argument(
         "--rendering-method",
-        choices=[method.name for method in SUPPORTED_MICROTONAL_RENDERING_METHODS],
+        choices=[method.name for method in MicrotonalRendering],
         default=MicrotonalRendering.MPE.name,
         help="Microtonal MIDI rendering method",
     )
