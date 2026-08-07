@@ -8,8 +8,11 @@ import pkgutil
 import aimusic
 
 
+OPTIONAL_MODULE_PREFIXES = ("aimusic.ml.",)
+
+
 def import_all_executable_modules() -> tuple[str, ...]:
-    """Import all package modules and the repository's root UI entrypoint."""
+    """Import executable surfaces available from the base installation."""
     module_names = tuple(
         sorted(
             module.name
@@ -17,6 +20,7 @@ def import_all_executable_modules() -> tuple[str, ...]:
                 aimusic.__path__,
                 prefix=f"{aimusic.__name__}.",
             )
+            if not module.name.startswith(OPTIONAL_MODULE_PREFIXES)
         )
     )
     for module_name in module_names:

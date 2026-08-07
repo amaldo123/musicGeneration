@@ -346,20 +346,30 @@ def _build_key_vocabulary(cardinality: int) -> TokenVocabulary[KeyToken]:
     return TokenVocabulary(name="keys", tokens=tokens)
 
 
-def _build_chord_vocabulary(chord_vocabulary_size: int) -> TokenVocabulary[ChordToken]:
+def _build_chord_vocabulary(
+    chord_vocabulary_size: int,
+    root_cardinality: int,
+) -> TokenVocabulary[ChordToken]:
     if chord_vocabulary_size <= 0:
         raise ValueError("chord_vocabulary_size must be > 0.")
-    quality_count = len(CORE_CHORD_QUALITIES)
-    if chord_vocabulary_size % quality_count != 0:
-        raise ValueError("chord_vocabulary_size must be a multiple of the core chord-quality count.")
+    if chord_vocabulary_size % root_cardinality != 0:
+        raise ValueError(
+            "chord_vocabulary_size must be a multiple of the chord-root cardinality."
+        )
 
-    root_cardinality = chord_vocabulary_size // quality_count
+    quality_count = chord_vocabulary_size // root_cardinality
+    if not 1 <= quality_count <= len(CORE_CHORD_QUALITIES):
+        raise ValueError(
+            "chord_vocabulary_size must select between one and "
+            f"{len(CORE_CHORD_QUALITIES)} qualities per chord root."
+        )
+    qualities = CORE_CHORD_QUALITIES[:quality_count]
     root_labels = _pitch_class_labels(root_cardinality)
 
     tokens = []
     token_id = 0
     for root_pc, root_label in enumerate(root_labels):
-        for quality in CORE_CHORD_QUALITIES:
+        for quality in qualities:
             tokens.append(
                 ChordToken(
                     id=token_id,
@@ -435,22 +445,39 @@ def _resolve_tonal_cardinality(
 
     explicit_keys = None if style_config is None else style_config.key_vocabulary_size
     explicit_chords = None if style_config is None else style_config.chord_vocabulary_size
-    quality_count = len(CORE_CHORD_QUALITIES)
-    chord_roots: Optional[int] = None
-    if explicit_chords is not None:
+    inferred_chord_roots: Optional[int] = None
+    if edo is None and explicit_keys is None and explicit_chords is not None:
+        quality_count = len(CORE_CHORD_QUALITIES)
         if explicit_chords % quality_count != 0:
             raise ValueError(
-                "chord_vocabulary_size must be a multiple of the core chord-quality count."
+                "chord_vocabulary_size alone must be a multiple of the core "
+                "chord-quality count."
             )
-        chord_roots = explicit_chords // quality_count
+        inferred_chord_roots = explicit_chords // quality_count
 
-    candidates = [value for value in (edo, explicit_keys, chord_roots) if value is not None]
+    candidates = [
+        value
+        for value in (edo, explicit_keys, inferred_chord_roots)
+        if value is not None
+    ]
     cardinality = 12 if not candidates else candidates[0]
     if any(value != cardinality for value in candidates[1:]):
         raise ValueError(
             "EDO, key_vocabulary_size, and chord-root cardinality must describe "
             "the same pitch-class space."
         )
+    if explicit_chords is not None:
+        if explicit_chords % cardinality != 0:
+            raise ValueError(
+                "chord_vocabulary_size must be a multiple of the EDO-derived "
+                "chord-root cardinality."
+            )
+        qualities_per_root = explicit_chords // cardinality
+        if not 1 <= qualities_per_root <= len(CORE_CHORD_QUALITIES):
+            raise ValueError(
+                "chord_vocabulary_size selects an unsupported number of "
+                "qualities per chord root."
+            )
     return cardinality
 
 
@@ -472,7 +499,11 @@ def build_default_vocabularies(
         DEFAULT_GROOVE_FAMILIES if style_config is None else style_config.groove_families
     )
     key_cardinality = _resolve_tonal_cardinality(style_config, edo)
-    chord_vocabulary_size = key_cardinality * len(CORE_CHORD_QUALITIES)
+    chord_vocabulary_size = (
+        key_cardinality * len(CORE_CHORD_QUALITIES)
+        if style_config is None or style_config.chord_vocabulary_size is None
+        else style_config.chord_vocabulary_size
+    )
 
     meters = _build_meter_vocabulary(meter_signatures)
     beat_positions = _build_beat_position_vocabulary(
@@ -483,7 +514,7 @@ def build_default_vocabularies(
         beat_positions=beat_positions,
         boundaries=_build_boundary_vocabulary(),
         keys=_build_key_vocabulary(key_cardinality),
-        chords=_build_chord_vocabulary(chord_vocabulary_size),
+        chords=_build_chord_vocabulary(chord_vocabulary_size, key_cardinality),
         roles=_build_role_vocabulary(),
         heads=_build_head_vocabulary(),
         grooves=_build_groove_vocabulary(groove_families),

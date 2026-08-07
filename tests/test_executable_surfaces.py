@@ -12,6 +12,7 @@ class TestExecutableSurfaces(unittest.TestCase):
         self.assertIn("aimusic.app.cli", imported)
         self.assertIn("aimusic.app.main", imported)
         self.assertIn("ui", imported)
+        self.assertNotIn("aimusic.ml.count_prior", imported)
 
 
 if __name__ == "__main__":
