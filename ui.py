@@ -21,7 +21,6 @@ from aimusic.core.config import (
     DecodeConfig,
     EDOConfig,
     MicrotonalRendering,
-    SUPPORTED_MICROTONAL_RENDERING_METHODS,
     StyleConfig,
 )
 from aimusic.core.diagnostics import RunManifest, SBDiagnostics
@@ -169,10 +168,8 @@ def _normalize_inputs(
     if not groove_family:
         raise ValueError("groove family must not be empty.")
     if not drum_track:
-        raise ValueError("drum track must not be empty.")
-    supported_rendering_names = tuple(
-        method.name for method in SUPPORTED_MICROTONAL_RENDERING_METHODS
-    )
+        raise ValueError("At least one track must be selected for drums.")
+    supported_rendering_names = tuple(MicrotonalRendering.__members__)
     if rendering_method not in supported_rendering_names:
         raise ValueError(
             "rendering method must be one of "
@@ -490,6 +487,21 @@ def _render_midi_preview_wav(
 
 
 def _convert_midi_to_wav(midi_path: Path, wav_path: Path) -> str:
+    midi_file = mido.MidiFile(midi_path)
+    has_mts_tuning = any(
+        message.type == "sysex"
+        and tuple(message.data[:5]) == (0x7E, 0x7F, 0x08, 0x01, 0x00)
+        for track in midi_file.tracks
+        for message in track
+    )
+    if has_mts_tuning:
+        raise MidiAudioConversionError(
+            "The MIDI file uses MIDI Tuning Standard (MTS). Audio preview is "
+            "disabled because the available preview converters cannot guarantee "
+            "MTS tuning reproduction. Download the MIDI and play it with an "
+            "MTS-compatible synthesizer."
+        )
+
     conversion_errors: list[str] = []
     fluidsynth = shutil.which("fluidsynth")
 
@@ -940,10 +952,7 @@ with gr.Blocks(title="MIDI Generator", fill_height=True) as demo:
             pitch_bend_range = gr.Number(label="pitch-bend-range", value=2, precision=0)
             rendering_method = gr.Dropdown(
                 label="rendering-method",
-                choices=[
-                    method.name
-                    for method in SUPPORTED_MICROTONAL_RENDERING_METHODS
-                ],
+                choices=[method.name for method in MicrotonalRendering],
                 value=MicrotonalRendering.MPE.name,
             )
 

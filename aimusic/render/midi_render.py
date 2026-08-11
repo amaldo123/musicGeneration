@@ -186,26 +186,30 @@ def _mpe_setup_events(channels: Sequence[int], pb_range: int) -> List[Tuple[int,
 def _mts_tuning_sysex(edo: EDO) -> mido.Message:
     """Build a MIDI Tuning Standard Bulk Dump SysEx for N-EDO.
 
-    Retunes all 128 MIDI notes so that standard note numbers map to the
-    nearest EDO pitch.  The synthesizer must support MTS for this to have
-    audible effect; otherwise playback falls back to 12-EDO.
+    MIDI key ``base_tuning + h`` represents EDO pitch height ``h``. Each
+    three-byte frequency entry contains an absolute 12-EDO semitone and a
+    14-bit fraction, as required by the MTS Bulk Tuning Dump format.
+
+    The synthesizer must support MTS for this to have audible effect;
+    otherwise playback falls back to its ordinary 12-EDO tuning.
     """
     n = edo.config.n
     base = edo.config.base_tuning
-    anchor_key = math.floor(base + 0.5)
+    anchor_midi_note = math.floor(base + 0.5)
     name = f"{n}-EDO MTS".encode("ascii")[:16].ljust(16, b"\x00")
 
     data = [0x7E, 0x7F, 0x08, 0x01, 0x00]
     data.extend(name)
 
-    for midi_key in range(128):
-        target_midi_pitch = base + (midi_key - anchor_key) * (12.0 / n)
-        if target_midi_pitch < 0.0 or target_midi_pitch >= 128.0:
+    for midi_note in range(128):
+        pitch_height = midi_note - anchor_midi_note
+        target_pitch = base + pitch_height * (12.0 / n)
+        if not 0.0 <= target_pitch < 128.0:
             data.extend([0x7F, 0x7F, 0x7F])
             continue
 
-        semitone = math.floor(target_midi_pitch)
-        fraction = round((target_midi_pitch - semitone) * 16384)
+        semitone = int(target_pitch)
+        fraction = round((target_pitch - semitone) * 16384)
         if fraction == 16384:
             semitone += 1
             fraction = 0

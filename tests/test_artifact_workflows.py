@@ -127,27 +127,51 @@ class TestUiArtifactWorkflow(unittest.TestCase):
 
         self.assertLessEqual(cents_error, 0.3)
 
-    def test_ui_rejects_deferred_mts_rendering(self) -> None:
-        with self.assertRaisesRegex(ValueError, "must be one of MPE"):
-            ui._normalize_inputs(
-                1,
-                4,
-                19,
-                "4/4",
-                "straight",
-                120,
-                False,
-                0.75,
-                0.60,
-                0.55,
-                0.45,
-                2,
-                MicrotonalRendering.MTS.name,
-                34,
-                5,
-                88,
-                ["drums"],
+    def test_ui_accepts_mts_generation(self) -> None:
+        params = ui._normalize_inputs(
+            1,
+            4,
+            19,
+            "4/4",
+            "straight",
+            120,
+            False,
+            0.75,
+            0.60,
+            0.55,
+            0.45,
+            2,
+            MicrotonalRendering.MTS.name,
+            34,
+            5,
+            88,
+            ["drums"],
+        )
+
+        self.assertEqual(params.rendering_method, MicrotonalRendering.MTS.name)
+
+    def test_ui_rejects_mts_audio_preview_with_actionable_message(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            midi_path = temp_path / "19-edo-mts.mid"
+            wav_path = temp_path / "19-edo-mts.wav"
+            render_midi(
+                [SymbolicNote(pitch_height=1, start_time=0.0, end_time=1.0)],
+                EDO(
+                    EDOConfig(
+                        n=19,
+                        base_tuning=60,
+                        microtonal_rendering_method=MicrotonalRendering.MTS,
+                    )
+                ),
+                str(midi_path),
             )
+
+            with self.assertRaisesRegex(
+                ui.MidiAudioConversionError,
+                "MTS-compatible synthesizer",
+            ):
+                ui._convert_midi_to_wav(midi_path, wav_path)
 
     def test_ui_generation_helper_writes_complete_consistent_artifacts(self) -> None:
         params = ui.GenerationParams(
