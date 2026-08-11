@@ -455,7 +455,11 @@ def _resolve_tonal_cardinality(
             )
         inferred_chord_roots = explicit_chords // quality_count
 
-    candidates = [value for value in (edo, explicit_keys, inferred_chord_roots) if value is not None]
+    candidates = [
+        value
+        for value in (edo, explicit_keys, inferred_chord_roots)
+        if value is not None
+    ]
     cardinality = 12 if not candidates else candidates[0]
     if any(value != cardinality for value in candidates[1:]):
         raise ValueError(

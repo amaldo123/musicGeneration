@@ -1,0 +1,16 @@
+{
+  "seed": 20260727,
+  "beats": 32,
+  "meter": "7/4",
+  "groove_family": "syncopated",
+  "edo": 19,
+  "tempo_bpm": 111.0,
+  "densities": {
+    "drum": 0.65,
+    "bass": 0.5,
+    "comping": 0.4,
+    "lead": 0.55
+  },
+  "minimum_event_count": 1,
+  "expected_tracks": ["bass", "comping", "drums", "lead"]
+}

@@ -17,7 +17,12 @@ import mido
 import numpy as np
 
 from aimusic.app.cli import _build_structural_diagnostics, _json_ready
-from aimusic.core.config import DecodeConfig, EDOConfig, MicrotonalRendering, StyleConfig
+from aimusic.core.config import (
+    DecodeConfig,
+    EDOConfig,
+    MicrotonalRendering,
+    StyleConfig,
+)
 from aimusic.core.diagnostics import RunManifest, SBDiagnostics
 from aimusic.core.vocab import DEFAULT_GROOVE_FAMILIES, DEFAULT_METER_SIGNATURES
 from aimusic.decode import decode_path_to_score
@@ -164,10 +169,11 @@ def _normalize_inputs(
         raise ValueError("groove family must not be empty.")
     if not drum_track:
         raise ValueError("At least one track must be selected for drums.")
-    if rendering_method not in MicrotonalRendering.__members__:
+    supported_rendering_names = tuple(MicrotonalRendering.__members__)
+    if rendering_method not in supported_rendering_names:
         raise ValueError(
             "rendering method must be one of "
-            f"{', '.join(MicrotonalRendering.__members__)}."
+            f"{', '.join(supported_rendering_names)}."
         )
 
     return GenerationParams(
@@ -835,7 +841,15 @@ def generate_music(
     comping_program: Any,
     lead_program: Any,
     drum_track: list[str],
-) -> tuple[str, Any, Any, Any, str, str, str]:
+) -> tuple[
+    str,
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    str,
+]:
     try:
         params = _normalize_inputs(
             seed,
@@ -1002,7 +1016,7 @@ with gr.Blocks(title="MIDI Generator", fill_height=True) as demo:
                     score_download.visible = False
                     manifest_download.visible = False
 
-    generate_button.click(
+    generate_button.click(  # type: ignore[attr-defined]
         fn=generate_music,
         inputs=[
             seed,

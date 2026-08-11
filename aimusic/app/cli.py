@@ -11,7 +11,12 @@ from aimusic.core.diagnostics import (
     StructuralDiagnostics,
     TimelineEvent,
 )
-from aimusic.core.config import DecodeConfig, EDOConfig, MicrotonalRendering, StyleConfig
+from aimusic.core.config import (
+    DecodeConfig,
+    EDOConfig,
+    MicrotonalRendering,
+    StyleConfig,
+)
 from aimusic.core.core_types import Score, ScoreValidationError
 from aimusic.core.vocab import DEFAULT_GROOVE_FAMILIES, DEFAULT_METER_SIGNATURES
 from aimusic.decode import decode_path_to_score
@@ -146,7 +151,8 @@ def handle_generate(args: argparse.Namespace) -> None:
         edo=args.edo,
     )
     prior = None
-    if args.prior_bundle:
+    prior_bundle = getattr(args, "prior_bundle", None)
+    if prior_bundle:
         try:
             from aimusic.ml.inference import load_trained_neural_prior
         except ImportError:
@@ -156,7 +162,7 @@ def handle_generate(args: argparse.Namespace) -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
-        prior = load_trained_neural_prior(args.prior_bundle)
+        prior = load_trained_neural_prior(prior_bundle)
     plan_result = run_method_a(run_config, prior=prior)
     score = decode_path_to_score(
         plan_result.path,

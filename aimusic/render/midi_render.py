@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
@@ -194,7 +195,7 @@ def _mts_tuning_sysex(edo: EDO) -> mido.Message:
     """
     n = edo.config.n
     base = edo.config.base_tuning
-    anchor_midi_note = int(base + 0.5)
+    anchor_midi_note = math.floor(base + 0.5)
     name = f"{n}-EDO MTS".encode("ascii")[:16].ljust(16, b"\x00")
 
     data = [0x7E, 0x7F, 0x08, 0x01, 0x00]
@@ -215,11 +216,14 @@ def _mts_tuning_sysex(edo: EDO) -> mido.Message:
         if semitone > 127:
             data.extend([0x7F, 0x7F, 0x7F])
             continue
+        if semitone == 127 and fraction == 16383:
+            fraction = 16382
         data.extend([semitone, (fraction >> 7) & 0x7F, fraction & 0x7F])
 
     checksum = 0
     for value in data:
         checksum ^= value
+    checksum &= 0x7F
     data.append(checksum)
 
     return mido.Message("sysex", data=data, time=0)

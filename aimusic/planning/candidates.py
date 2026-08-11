@@ -6,7 +6,7 @@ import numpy as np
 
 from aimusic.core.config import StyleConfig
 from aimusic.core.core_types import BeatState
-from aimusic.scoring.gttm_features import beats_per_bar, is_strong_beat
+from aimusic.scoring.gttm_features import beats_per_bar
 from aimusic.scoring.priors import NullPrior, Prior, PriorContext, PriorQuery, prior_logps
 from aimusic.theory.tonal import get_fifth_steps, nearest_roots
 from aimusic.core.vocab import (
@@ -60,6 +60,10 @@ def _edo_size(vocabularies: Vocabularies) -> int:
 
 def _meter_token(state: BeatState, vocabularies: Vocabularies):
     return vocabularies.meters.token_for_id(state.meter_id)
+
+
+def _is_strong_beat(meter_id: int, beat_in_bar: int, vocabularies: Vocabularies) -> bool:
+    return beat_in_bar in vocabularies.meters.token_for_id(meter_id).strong_beats
 
 
 def _boundary_token(state: BeatState, vocabularies: Vocabularies):
@@ -253,7 +257,11 @@ def apply_position_constraints(
     if next_candidate.beat_in_bar != expected_beat:
         return False, "non_contiguous_beat_progression"
 
-    strong = is_strong_beat(next_candidate.beat_in_bar, beats)
+    strong = _is_strong_beat(
+        next_candidate.meter_id,
+        next_candidate.beat_in_bar,
+        resolved_vocabs,
+    )
     if next_candidate.boundary_lvl > 0 and not strong:
         return False, "boundary_requires_strong_beat"
     if next_candidate.boundary_lvl >= 2 and next_candidate.beat_in_bar != 0:
@@ -275,8 +283,11 @@ def apply_role_constraints(
     if next_role not in LEGAL_ROLE_SUCCESSORS[prev_role]:
         return False, "illegal_role_progression"
 
-    beats = beats_per_bar(next_candidate.meter_id, vocabularies.meters.id_map)
-    strong = is_strong_beat(next_candidate.beat_in_bar, beats)
+    strong = _is_strong_beat(
+        next_candidate.meter_id,
+        next_candidate.beat_in_bar,
+        vocabularies,
+    )
     if next_role == "cad":
         if next_candidate.boundary_lvl <= 0:
             return False, "cadence_requires_boundary"
@@ -313,8 +324,11 @@ def apply_boundary_and_groove_constraints(
             return False, "key_change_requires_phrase_boundary_or_structural_role"
 
     head_label = _head_label(next_candidate, vocabularies)
-    beats = beats_per_bar(next_candidate.meter_id, vocabularies.meters.id_map)
-    strong = is_strong_beat(next_candidate.beat_in_bar, beats)
+    strong = _is_strong_beat(
+        next_candidate.meter_id,
+        next_candidate.beat_in_bar,
+        vocabularies,
+    )
     if head_label in APPROACH_HEAD_LABELS and (strong or next_candidate.boundary_lvl > 0):
         return False, "approach_head_requires_weak_non_boundary_position"
 
@@ -360,9 +374,8 @@ def propose_boundary_levels(
     next_beat_in_bar: int,
     vocabularies: Vocabularies,
 ) -> Tuple[int, ...]:
-    beats = beats_per_bar(next_meter_id, vocabularies.meters.id_map)
     proposals = [vocabularies.boundaries.token_for_label("none").id]
-    if is_strong_beat(next_beat_in_bar, beats):
+    if _is_strong_beat(next_meter_id, next_beat_in_bar, vocabularies):
         proposals.append(vocabularies.boundaries.token_for_label("local").id)
     if next_beat_in_bar == 0:
         proposals.append(vocabularies.boundaries.token_for_label("phrase").id)
@@ -379,8 +392,7 @@ def propose_role_ids(
 ) -> Tuple[int, ...]:
     prev_role = _role_label(prev_state, vocabularies)
     allowed_labels = set(LEGAL_ROLE_SUCCESSORS[prev_role])
-    beats = beats_per_bar(next_meter_id, vocabularies.meters.id_map)
-    strong = is_strong_beat(next_beat_in_bar, beats)
+    strong = _is_strong_beat(next_meter_id, next_beat_in_bar, vocabularies)
 
     if not strong:
         allowed_labels.discard("cad")
@@ -466,8 +478,7 @@ def propose_head_ids(
 ) -> Tuple[int, ...]:
     chord = _chord_token_by_id(chord_id, vocabularies)
     role_label = vocabularies.roles.token_for_id(next_role_id).label
-    beats = beats_per_bar(next_meter_id, vocabularies.meters.id_map)
-    strong = is_strong_beat(next_beat_in_bar, beats)
+    strong = _is_strong_beat(next_meter_id, next_beat_in_bar, vocabularies)
 
     anchor_labels = ["root", "third", "fifth"]
     if chord.quality == "7":
