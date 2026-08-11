@@ -81,6 +81,8 @@ class MidiPreviewNote:
     midi_note: int
     velocity: int
     channel: int
+    pitch_bend: int = 0
+    pitch_bend_range: float = 2.0
 
 
 class MidiAudioConversionError(RuntimeError):
@@ -161,7 +163,7 @@ def _normalize_inputs(
     if not groove_family:
         raise ValueError("groove family must not be empty.")
     if not drum_track:
-raise ValueError("At least one track must be selected for drums.")
+        raise ValueError("At least one track must be selected for drums.")
     if rendering_method not in MicrotonalRendering.__members__:
         raise ValueError(
             "rendering method must be one of "
@@ -311,22 +313,54 @@ def _extract_midi_preview_notes(midi_path: Path) -> list[MidiPreviewNote]:
 
     for track_index, track in enumerate(midi_file.tracks):
         absolute_tick = 0
-        active_notes: dict[tuple[int, int, int], list[tuple[int, int]]] = {}
+        active_notes: dict[
+            tuple[int, int, int],
+            list[tuple[int, int, int, float]],
+        ] = {}
+        pitch_bends: dict[int, int] = {}
+        pitch_bend_ranges: dict[int, float] = {}
+        rpn_selection: dict[int, tuple[int, int]] = {}
+        rpn_msb: dict[int, int] = {}
+        rpn_lsb: dict[int, int] = {}
         for message in track:
             absolute_tick += int(message.time)
+            if hasattr(message, "channel") and message.type == "pitchwheel":
+                pitch_bends[int(message.channel)] = int(message.pitch)
+                continue
+            if hasattr(message, "channel") and message.type == "control_change":
+                channel = int(message.channel)
+                if message.control == 101:
+                    rpn_msb[channel] = int(message.value)
+                elif message.control == 100:
+                    rpn_lsb[channel] = int(message.value)
+                rpn_selection[channel] = (
+                    rpn_msb.get(channel, 127),
+                    rpn_lsb.get(channel, 127),
+                )
+                if message.control == 6 and rpn_selection[channel] == (0, 0):
+                    pitch_bend_ranges[channel] = float(message.value)
+                continue
             if not hasattr(message, "channel") or not hasattr(message, "note"):
                 continue
 
-            key = (track_index, int(message.channel), int(message.note))
+            channel = int(message.channel)
+            key = (track_index, channel, int(message.note))
             if message.type == "note_on" and message.velocity > 0:
-                active_notes.setdefault(key, []).append((absolute_tick, int(message.velocity)))
+                active_notes.setdefault(key, []).append(
+                    (
+                        absolute_tick,
+                        int(message.velocity),
+                        pitch_bends.get(channel, 0),
+                        pitch_bend_ranges.get(channel, 2.0),
+                    )
+                )
             elif message.type == "note_off" or (
                 message.type == "note_on" and message.velocity == 0
             ):
                 starts = active_notes.get(key)
                 if not starts:
                     continue
-                start_tick, velocity = starts.pop(0)
+                start_tick, velocity, pitch_bend, pitch_bend_range = starts.pop(0)
                 if absolute_tick <= start_tick:
                     continue
                 preview_notes.append(
@@ -335,15 +369,23 @@ def _extract_midi_preview_notes(midi_path: Path) -> list[MidiPreviewNote]:
                         end_time=absolute_tick * seconds_per_tick,
                         midi_note=int(message.note),
                         velocity=velocity,
-                        channel=int(message.channel),
+                        channel=channel,
+                        pitch_bend=pitch_bend,
+                        pitch_bend_range=pitch_bend_range,
                     )
                 )
 
     return preview_notes
 
 
-def _midi_note_frequency(midi_note: int) -> float:
-    return 440.0 * (2.0 ** ((midi_note - 69) / 12.0))
+def _midi_note_frequency(
+    midi_note: int,
+    pitch_bend: int = 0,
+    pitch_bend_range: float = 2.0,
+) -> float:
+    bend_scale = 8191 if pitch_bend >= 0 else 8192
+    sounding_pitch = midi_note + (pitch_bend / bend_scale) * pitch_bend_range
+    return 440.0 * (2.0 ** ((sounding_pitch - 69) / 12.0))
 
 
 def _note_envelope(sample_count: int, sample_rate: int) -> np.ndarray:
@@ -387,7 +429,11 @@ def _render_melodic_preview(note: MidiPreviewNote, sample_rate: int) -> np.ndarr
     duration = max(0.01, note.end_time - note.start_time)
     sample_count = max(1, int(duration * sample_rate))
     t = np.arange(sample_count, dtype=np.float32) / sample_rate
-    frequency = _midi_note_frequency(note.midi_note)
+    frequency = _midi_note_frequency(
+        note.midi_note,
+        note.pitch_bend,
+        note.pitch_bend_range,
+    )
     amplitude = 0.13 * (note.velocity / 127.0)
     wave_data = (
         np.sin(2.0 * math.pi * frequency * t)
@@ -435,6 +481,21 @@ def _render_midi_preview_wav(
 
 
 def _convert_midi_to_wav(midi_path: Path, wav_path: Path) -> str:
+    midi_file = mido.MidiFile(midi_path)
+    has_mts_tuning = any(
+        message.type == "sysex"
+        and tuple(message.data[:5]) == (0x7E, 0x7F, 0x08, 0x01, 0x00)
+        for track in midi_file.tracks
+        for message in track
+    )
+    if has_mts_tuning:
+        raise MidiAudioConversionError(
+            "The MIDI file uses MIDI Tuning Standard (MTS). Audio preview is "
+            "disabled because the available preview converters cannot guarantee "
+            "MTS tuning reproduction. Download the MIDI and play it with an "
+            "MTS-compatible synthesizer."
+        )
+
     conversion_errors: list[str] = []
     fluidsynth = shutil.which("fluidsynth")
 
@@ -470,7 +531,7 @@ def _convert_midi_to_wav(midi_path: Path, wav_path: Path) -> str:
 
     try:
         _render_midi_preview_wav(midi_path, wav_path)
-        return "built-in preview synth"
+        return "built-in preview synth (MPE pitch bends applied)"
     except Exception as exc:
         conversion_errors.append(f"built-in preview synth failed: {exc}")
 

@@ -91,8 +91,16 @@ def vocabularies_from_export(data: dict[str, Any]) -> tuple[dict[str, Any], Styl
         allowed_meters=tuple(style_data["allowed_meters"]),
         subdivision_patterns=tuple(style_data["subdivision_patterns"]),
         groove_families=tuple(style_data["groove_families"]),
-        chord_vocabulary_size=int(style_data["chord_vocabulary_size"]),
-        key_vocabulary_size=int(style_data["key_vocabulary_size"]),
+        chord_vocabulary_size=(
+            None
+            if style_data["chord_vocabulary_size"] is None
+            else int(style_data["chord_vocabulary_size"])
+        ),
+        key_vocabulary_size=(
+            None
+            if style_data["key_vocabulary_size"] is None
+            else int(style_data["key_vocabulary_size"])
+        ),
         bass_register=tuple(style_data["bass_register"]),
         comping_register=tuple(style_data["comping_register"]),
         lead_register=tuple(style_data["lead_register"]),

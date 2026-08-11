@@ -254,7 +254,7 @@ def handle_inspect(args: argparse.Namespace) -> None:
     # --- SB Math Diagnostics ---
     sb = data.get("sb_stats", {})
     print("\n--- Schrödinger Bridge Health ---")
-    status = "🟢 Converged" if sb.get("converged") else "🔴 FAILED"
+    status = "Converged" if sb.get("converged") else "FAILED"
     print(f"Status:      {status} (in {sb.get('iterations_run')} iterations)")
     print(f"Max Delta:   {sb.get('final_max_delta')}")
     entropy = sb.get("effective_entropy")
@@ -279,7 +279,7 @@ def handle_inspect(args: argparse.Namespace) -> None:
 
     print("\n--- Tension Arc ---")
     for time_val, tension in structure.get("tension_curve", []):
-        bar = "█" * int(tension * 20)
+        bar = "#" * int(tension * 20)
         print(f"Beat {time_val:04.1f}: {bar} ({tension:.3f})")
     print("=========================================================\n")
 

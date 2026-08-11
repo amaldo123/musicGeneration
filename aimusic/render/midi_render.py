@@ -185,26 +185,41 @@ def _mpe_setup_events(channels: Sequence[int], pb_range: int) -> List[Tuple[int,
 def _mts_tuning_sysex(edo: EDO) -> mido.Message:
     """Build a MIDI Tuning Standard Bulk Dump SysEx for N-EDO.
 
-    Retunes all 128 MIDI notes so that standard note numbers map to the
-    nearest EDO pitch.  The synthesizer must support MTS for this to have
-    audible effect; otherwise playback falls back to 12-EDO.
+    MIDI key ``base_tuning + h`` represents EDO pitch height ``h``. Each
+    three-byte frequency entry contains an absolute 12-EDO semitone and a
+    14-bit fraction, as required by the MTS Bulk Tuning Dump format.
+
+    The synthesizer must support MTS for this to have audible effect;
+    otherwise playback falls back to its ordinary 12-EDO tuning.
     """
     n = edo.config.n
     base = edo.config.base_tuning
+    anchor_midi_note = int(base + 0.5)
     name = f"{n}-EDO MTS".encode("ascii")[:16].ljust(16, b"\x00")
 
     data = [0x7E, 0x7F, 0x08, 0x01, 0x00]
     data.extend(name)
 
     for midi_note in range(128):
-        edo_step = round((midi_note - base) * n / 12)
-        exact_semitones = base + edo_step * 12.0 / n
-        cents_dev = (exact_semitones - midi_note) * 100.0
-        detune = 8192 + round(cents_dev * 8192 / 100)
-        detune = max(0, min(16383, detune))
-        data.extend([midi_note, (detune >> 7) & 0x7F, detune & 0x7F])
+        pitch_height = midi_note - anchor_midi_note
+        target_pitch = base + pitch_height * (12.0 / n)
+        if not 0.0 <= target_pitch < 128.0:
+            data.extend([0x7F, 0x7F, 0x7F])
+            continue
 
-    checksum = (128 - (sum(data) % 128)) % 128
+        semitone = int(target_pitch)
+        fraction = round((target_pitch - semitone) * 16384)
+        if fraction == 16384:
+            semitone += 1
+            fraction = 0
+        if semitone > 127:
+            data.extend([0x7F, 0x7F, 0x7F])
+            continue
+        data.extend([semitone, (fraction >> 7) & 0x7F, fraction & 0x7F])
+
+    checksum = 0
+    for value in data:
+        checksum ^= value
     data.append(checksum)
 
     return mido.Message("sysex", data=data, time=0)
@@ -226,7 +241,13 @@ def _note_events_for_track(
 ) -> List[Tuple[int, int, str, int, int, int]]:
     events: List[Tuple[int, int, str, int, int, int]] = []
     for track_note, channel in track_notes:
-        midi_note, pitch_bend = edo.to_midi(track_note.note.pitch_height)
+        if is_drum:
+            midi_note = track_note.note.pitch_height
+            if midi_note < 0 or midi_note > 127:
+                raise ValueError("Drum pitch must be in the MIDI note range 0..127.")
+            pitch_bend = 0
+        else:
+            midi_note, pitch_bend = edo.to_midi(track_note.note.pitch_height)
         start_tick = int(track_note.note.start_time * ticks_per_beat)
         end_tick = int(track_note.note.end_time * ticks_per_beat)
 

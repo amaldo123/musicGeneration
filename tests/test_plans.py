@@ -1,6 +1,16 @@
+import tempfile
 import unittest
+from pathlib import Path
 
-from aimusic.core.config import PlanConfig, SectioningStrategy, StyleConfig
+import mido
+
+from aimusic.core.config import (
+    EDOConfig,
+    PlanConfig,
+    SectioningStrategy,
+    StyleConfig,
+)
+from aimusic.decode import decode_path_to_score
 from aimusic.planning.plans import (
     MethodARunConfig,
     build_section_plan,
@@ -9,6 +19,8 @@ from aimusic.planning.plans import (
     generate_start_endpoint_distribution,
     run_method_a,
 )
+from aimusic.render import render_midi
+from aimusic.theory.edo import EDO
 
 
 class TestMethodAEndpointPlanning(unittest.TestCase):
@@ -62,6 +74,49 @@ class TestMethodAEndpointPlanning(unittest.TestCase):
 
 
 class TestMethodAOrchestration(unittest.TestCase):
+    def test_12_and_19_edo_share_one_context_end_to_end(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for n in (12, 19):
+                with self.subTest(edo=n):
+                    result = run_method_a(
+                        MethodARunConfig(
+                            total_beats=4,
+                            seed=31,
+                            edo=n,
+                            style_config=StyleConfig(
+                                allowed_meters=("4/4",),
+                                groove_families=("straight",),
+                            ),
+                        )
+                    )
+                    score = decode_path_to_score(
+                        result.path,
+                        vocabularies=result.vocabularies,
+                        edo=result.tonal_context.n,
+                    )
+                    midi_path = Path(temp_dir) / f"{n}-edo.mid"
+                    render_midi(
+                        score,
+                        EDO(EDOConfig(n=result.tonal_context.n, base_tuning=0)),
+                        str(midi_path),
+                    )
+
+                    chord_roots = {
+                        token.root_pc for token in result.vocabularies.chords
+                    }
+                    self.assertEqual(result.tonal_context.n, n)
+                    self.assertEqual(len(result.vocabularies.keys), n)
+                    self.assertEqual(chord_roots, set(range(n)))
+                    self.assertTrue(score.note_events)
+                    self.assertGreater(
+                        sum(
+                            message.type == "note_on" and message.velocity > 0
+                            for track in mido.MidiFile(midi_path).tracks
+                            for message in track
+                        ),
+                        0,
+                    )
+
     def test_generate_method_a_endpoints_returns_sections(self):
         run_config = MethodARunConfig(total_beats=4)
 

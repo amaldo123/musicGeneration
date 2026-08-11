@@ -143,8 +143,10 @@ class StyleConfig:
     allowed_meters: Tuple[str, ...] = ("4/4", "5/4", "7/4")
     subdivision_patterns: Tuple[int, ...] = (3, 4)
     groove_families: Tuple[str, ...] = ("straight", "syncopated")
-    chord_vocabulary_size: int = 48
-    key_vocabulary_size: int = 12
+    # ``None`` means "derive from the run EDO". Explicit sizes are accepted
+    # only when they describe the same pitch-class space as that EDO.
+    chord_vocabulary_size: Optional[int] = None
+    key_vocabulary_size: Optional[int] = None
     bass_register: RegisterRange = (28, 52)
     comping_register: RegisterRange = (45, 72)
     lead_register: RegisterRange = (60, 88)
@@ -162,8 +164,10 @@ class StyleConfig:
         object.__setattr__(
             self, "groove_families", _coerce_non_empty_str_tuple("groove_families", self.groove_families)
         )
-        _require_int("chord_vocabulary_size", self.chord_vocabulary_size, minimum=1)
-        _require_int("key_vocabulary_size", self.key_vocabulary_size, minimum=1)
+        if self.chord_vocabulary_size is not None:
+            _require_int("chord_vocabulary_size", self.chord_vocabulary_size, minimum=1)
+        if self.key_vocabulary_size is not None:
+            _require_int("key_vocabulary_size", self.key_vocabulary_size, minimum=1)
         object.__setattr__(
             self, "bass_register", _coerce_register_range("bass_register", self.bass_register)
         )
