@@ -234,5 +234,123 @@ class TestDiagnostics(unittest.TestCase):
             self.assertEqual(len(notes), 3)
             self.assertEqual(notes[1].pitch_height, 64, "Regression: Pipeline picked wrong structural path")
 
+    def test_manifest_serialization_deserialization_round_trip(self):
+        """Tests that RunManifest.to_dict() and RunManifest.from_dict() perform lossless round-trips."""
+        from aimusic.core.diagnostics import (
+            EndpointDiagnosticsData,
+            GraphDiagnosticsData,
+            LayerGraphStats,
+            PathDiagnosticsData,
+        )
+        graph_stats = GraphDiagnosticsData(
+            layer_sizes=[1, 4, 1],
+            per_layer_stats=[
+                LayerGraphStats(time_index=1, proposed=10, legal=8, scored=8, retained=4, pruned=2)
+            ],
+            rejection_summary={"illegal_step": 2},
+            pruning_summary={"k_max_prune": 2},
+            total_proposed=10,
+            total_legal=8,
+            total_scored=8,
+            total_retained=4,
+            total_pruned=2,
+        )
+        endpoint_stats = EndpointDiagnosticsData(pi0_support_size=1, piT_support_size=1, unreachable_probability_mass=0.0)
+        path_stats = PathDiagnosticsData(path_mode="map", path_score=-3.5, path_length=4)
+
+        manifest = RunManifest(
+            seed=42,
+            config_dump={"edo": 12},
+            graph_stats=graph_stats,
+            endpoint_stats=endpoint_stats,
+            path_stats=path_stats,
+        )
+        data = manifest.to_dict()
+
+        self.assertEqual(data["schema_version"], "1.0.0")
+        self.assertEqual(data["seed"], 42)
+
+        deserialized = RunManifest.from_dict(data)
+        self.assertEqual(deserialized.seed, 42)
+        self.assertEqual(deserialized.schema_version, "1.0.0")
+        self.assertEqual(deserialized.graph_stats.total_proposed, 10)
+        self.assertEqual(deserialized.graph_stats.rejection_summary, {"illegal_step": 2})
+        self.assertEqual(deserialized.endpoint_stats.pi0_support_size, 1)
+        self.assertEqual(deserialized.path_stats.path_score, -3.5)
+
+    def test_manifest_deserialization_invalid_or_missing_fields(self):
+        """Verifies that missing or invalid fields raise clear TypeError/ValueError exceptions."""
+        with self.assertRaises(TypeError):
+            RunManifest.from_dict("not a dict")  # type: ignore
+
+        with self.assertRaises(ValueError):
+            RunManifest.from_dict({})
+
+        with self.assertRaises(ValueError):
+            RunManifest.from_dict({"seed": 42})  # missing config
+
+    def test_manifest_unsupported_schema_version_rejected(self):
+        """Verifies that unsupported major schema versions are rejected."""
+        with self.assertRaises(ValueError):
+            RunManifest.from_dict({"seed": 42, "config": {}, "schema_version": "2.0.0"})
+
+        with self.assertRaises(ValueError):
+            RunManifest.from_dict({"seed": 42, "config": {}, "schema_version": "invalid"})
+
+    def test_manifest_older_schema_migration_safe(self):
+        """Verifies that older unversioned manifests and legacy pruned_nodes migrate safely."""
+        legacy_data = {
+            "seed": 100,
+            "config": {"meter": "4/4"},
+            "sb_stats": {
+                "converged": True,
+                "iterations_run": 5,
+                "final_max_delta": 1e-6,
+                "layer_sizes": [1, 2, 1],
+                "pruned_nodes": 4,  # legacy field
+                "effective_entropy": 0.5,
+            },
+        }
+
+        manifest = RunManifest.from_dict(legacy_data)
+        self.assertEqual(manifest.schema_version, "1.0.0")
+        self.assertEqual(manifest.seed, 100)
+        self.assertEqual(manifest.sb_stats.disconnected_nodes, 4)
+        self.assertEqual(manifest.sb_stats.pruned_nodes, 4)
+
+    def test_manifest_pruning_totals_match_graph_diagnostic_records(self):
+        """Verifies that manifest pruning totals exactly match the underlying graph build diagnostics."""
+        from aimusic.core.diagnostics import build_run_manifest
+        from aimusic.planning.plans import MethodARunConfig, run_method_a
+
+        config = MethodARunConfig(total_beats=4, seed=123)
+        plan_result = run_method_a(config)
+        manifest = build_run_manifest(plan_result, seed=123, config_dump={"test": True})
+
+        expected_total_pruned = sum(
+            len(diag.pruned_states) for diag in plan_result.graph.diagnostics.layer_diagnostics
+        )
+        self.assertEqual(manifest.graph_stats.total_pruned, expected_total_pruned)
+
+    def test_generated_manifest_includes_all_diagnostics(self):
+        """End-to-end verification that generated manifests include graph, endpoint, solver, and path info."""
+        from aimusic.core.diagnostics import build_run_manifest
+        from aimusic.planning.plans import MethodARunConfig, run_method_a
+
+        config = MethodARunConfig(total_beats=4, seed=777)
+        plan_result = run_method_a(config)
+        manifest = build_run_manifest(plan_result, seed=777, config_dump={"test": True})
+
+        self.assertEqual(manifest.schema_version, "1.0.0")
+        self.assertEqual(manifest.seed, 777)
+        self.assertGreater(manifest.graph_stats.total_proposed, 0)
+        self.assertGreater(manifest.graph_stats.total_retained, 0)
+        self.assertGreater(manifest.endpoint_stats.pi0_support_size, 0)
+        self.assertGreater(manifest.endpoint_stats.piT_support_size, 0)
+        self.assertTrue(manifest.sb_stats.converged)
+        self.assertEqual(manifest.path_stats.path_mode, "map")
+        self.assertIsNotNone(manifest.path_stats.path_score)
+
+
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main()
