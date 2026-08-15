@@ -10,6 +10,8 @@ from aimusic.core.diagnostics import (
     SBDiagnostics,
     StructuralDiagnostics,
     TimelineEvent,
+    build_run_manifest,
+    build_structural_diagnostics,
 )
 from aimusic.core.config import (
     DecodeConfig,
@@ -64,31 +66,7 @@ def _segment_timeline(values: Iterable[str]) -> list[TimelineEvent]:
 
 
 def _build_structural_diagnostics(path: tuple[Any, ...], vocabularies: Any) -> StructuralDiagnostics:
-    decoded_states = path[:-1] if len(path) > 1 else path
-    key_labels = [vocabularies.keys.token_for_id(state.key_id).label for state in decoded_states]
-    chord_labels = [vocabularies.chords.token_for_id(state.chord_id).label for state in decoded_states]
-    role_labels = [vocabularies.roles.token_for_id(state.role_id).label for state in decoded_states]
-    groove_labels = [vocabularies.grooves.token_for_id(state.groove_id).label for state in decoded_states]
-    boundaries = [float(index) for index, state in enumerate(decoded_states) if state.boundary_lvl > 0]
-    tension_curve = [
-        (
-            float(index),
-            min(
-                1.0,
-                ROLE_TENSION[vocabularies.roles.token_for_id(state.role_id).label]
-                + (0.05 * state.boundary_lvl),
-            ),
-        )
-        for index, state in enumerate(decoded_states)
-    ]
-    return StructuralDiagnostics(
-        key_timeline=_segment_timeline(key_labels),
-        chord_timeline=_segment_timeline(chord_labels),
-        role_timeline=_segment_timeline(role_labels),
-        groove_timeline=_segment_timeline(groove_labels),
-        boundaries=boundaries,
-        tension_curve=tension_curve,
-    )
+    return build_structural_diagnostics(path, vocabularies)
 
 
 def _build_edo(args: argparse.Namespace) -> EDO:
@@ -171,8 +149,8 @@ def handle_generate(args: argparse.Namespace) -> None:
         edo=args.edo,
         tempo_bpm=args.tempo_bpm,
     )
-    structural_stats = _build_structural_diagnostics(plan_result.path, plan_result.vocabularies)
-    manifest = RunManifest(
+    manifest = build_run_manifest(
+        plan_result,
         seed=args.seed,
         config_dump=_json_ready(
             {
@@ -184,8 +162,6 @@ def handle_generate(args: argparse.Namespace) -> None:
                 "track_instruments": _build_track_instruments(args),
             }
         ),
-        structural_stats=structural_stats,
-        sb_stats=SBDiagnostics.from_solution(plan_result.sb_solution),
     )
 
     out_dir = Path(args.out)
@@ -246,31 +222,63 @@ def handle_inspect(args: argparse.Namespace) -> None:
     manifest_path = Path(args.file)
     data = _load_json_file(manifest_path, kind="manifest")
 
-    required_keys = ("run_id", "sb_stats", "structure")
-    missing = [key for key in required_keys if key not in data]
-    if missing:
-        print(
-            f"Error: {manifest_path} is not a valid run manifest "
-            f"(missing field(s): {', '.join(missing)})."
-        )
+    try:
+        manifest = RunManifest.from_dict(data)
+    except Exception as exc:
+        print(f"Error: {manifest_path} is not a valid run manifest ({exc}).")
         sys.exit(1)
 
-    print(f"\n=== Inspection Report for Run: {data.get('run_id')} ===")
+    print(f"\n=== Inspection Report for Run: {manifest.run_id} ===")
+    print(f"Schema Version: {manifest.schema_version}")
 
-    # --- SB Math Diagnostics ---
-    sb = data.get("sb_stats", {})
+    # --- Graph Construction & Diagnostics ---
+    gstats = manifest.graph_stats
+    print("\n--- Graph Construction & Diagnostics ---")
+    print(f"Layer sizes:     {gstats.layer_sizes}")
+    print(f"Candidates proposed: {gstats.total_proposed}")
+    print(f"Legal transitions:   {gstats.total_legal}")
+    print(f"Transitions scored:  {gstats.total_scored}")
+    print(f"States retained:     {gstats.total_retained}")
+    print(f"States pruned:       {gstats.total_pruned}")
+
+    if gstats.rejection_summary:
+        print("Rejection reasons:")
+        for reason, count in gstats.rejection_summary.items():
+            print(f"  {reason}: {count}")
+    if gstats.pruning_summary:
+        print("Pruning reasons:")
+        for reason, count in gstats.pruning_summary.items():
+            print(f"  {reason}: {count}")
+
+    # --- Endpoints ---
+    estats = manifest.endpoint_stats
+    print("\n--- Endpoint Distributions ---")
+    print(f"pi0 support size: {estats.pi0_support_size}")
+    print(f"piT support size: {estats.piT_support_size}")
+    print(f"Unreachable mass: {estats.unreachable_probability_mass:.4f}")
+
+    # --- Schrödinger Bridge Health ---
+    sb = manifest.sb_stats
     print("\n--- Schrödinger Bridge Health ---")
-    status = "Converged" if sb.get("converged") else "FAILED"
-    print(f"Status:      {status} (in {sb.get('iterations_run')} iterations)")
-    print(f"Max Delta:   {sb.get('final_max_delta')}")
-    entropy = sb.get("effective_entropy")
-    entropy_display = f"{entropy:.4f}" if isinstance(entropy, (int, float)) else "n/a"
-    print(f"Entropy:     {entropy_display} (Lower = More Confident)")
-    print(f"Pruned dead: {sb.get('pruned_nodes')} nodes")
-    print(f"Layer sizes: {sb.get('layer_sizes')}")
+    status = "Converged" if sb.converged else "FAILED"
+    print(f"Status:             {status} (in {sb.iterations_run} iterations)")
+    print(f"Max Delta:          {sb.final_max_delta}")
+    entropy_display = f"{sb.effective_entropy:.4f}" if sb.effective_entropy is not None else "n/a"
+    print(f"Entropy:            {entropy_display} (Lower = More Confident)")
+    print(f"Disconnected nodes: {sb.disconnected_nodes} nodes")
+    print(f"Layer sizes:        {sb.layer_sizes}")
+    if sb.residual_history:
+        print(f"Residual history:   {sb.residual_history}")
+
+    # --- Final Path Selection ---
+    pstats = manifest.path_stats
+    print("\n--- Final Path Selection ---")
+    print(f"Selection Mode: {pstats.path_mode}")
+    score_display = f"{pstats.path_score:.4f}" if pstats.path_score is not None else "n/a"
+    print(f"Path Score:     {score_display}")
 
     # --- Structural Timelines ---
-    structure = data.get("structure", {})
+    structure = manifest.structural_stats.to_dict()
     _print_timeline("Key Timeline", structure.get("key_timeline", []))
     _print_timeline("Chord Timeline", structure.get("chord_timeline", []))
     _print_timeline("Role Timeline", structure.get("role_timeline", []))
@@ -288,6 +296,7 @@ def handle_inspect(args: argparse.Namespace) -> None:
         bar = "#" * int(tension * 20)
         print(f"Beat {time_val:04.1f}: {bar} ({tension:.3f})")
     print("=========================================================\n")
+
 
 
 def handle_export(args: argparse.Namespace) -> None:
