@@ -21,7 +21,7 @@ Ordered backlog. Prefer one P0/P1 item per session. Full roadmap:
 ## P2 — Safe generative loop
 
 - [ ] Profile with prompts+restyle+scoring (mock only)
-- [x] CI tests job installs `.[audio]` for `tests/test_audio_*.py`
+- [x] CI tests install PyYAML via `requirements.txt` for `tests/test_audio_*.py`
 - [ ] Never require live API keys in default CI
 
 ## P3 — B3 microtonal integrity
