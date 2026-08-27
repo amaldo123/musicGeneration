@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from aimusic.core.core_types import Score
 from aimusic.core.render_package import (
@@ -42,7 +43,7 @@ class ValidationReport:
     package_root: Path
 
 
-def _structure_from_dict(data: dict[str, object]) -> StructureDoc:
+def _structure_from_dict(data: dict[str, Any]) -> StructureDoc:
     return StructureDoc(
         schema=str(data.get("schema", STRUCTURE_SCHEMA)),
         provenance=str(data.get("provenance", "planner")),
