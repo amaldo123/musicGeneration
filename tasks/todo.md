@@ -8,4 +8,4 @@
 - [x] Add `tests/test_audio_entry.py`; CI tests job uses `.[audio]`
 - [x] Update `docs/audio-next-steps.md`, `docs/audio-pipeline.md`
 - [x] Run lint/typecheck/tests locally
-- [ ] Push branch + open PR (requires GitHub auth on this machine)
+- [x] Push branch + open PR → https://github.com/arsenylosev/musicGeneration/pull/3
