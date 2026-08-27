@@ -26,13 +26,13 @@ deferred to PR3.
 ### Task List
 
 - [x] Branch `feature/m1-audio-spine` from fork `main`
-- [ ] `aimusic/audio/config.py` — frozen dataclass YAML loader
-- [ ] `aimusic/audio/from_score.py` — `AudioPackageContext` + `validate_package`
-- [ ] `aimusic/audio/entry.py` + CLI `render-audio` lazy import
-- [ ] `[audio-bridge]` extra in `pyproject.toml` (packaging only)
-- [ ] `tests/test_audio_entry.py`; CI tests job installs `.[audio]`
-- [ ] Update `docs/audio-next-steps.md`, `tasks/todo.md`
-- [ ] Fork PR → `main`; CI green
+- [x] `aimusic/audio/config.py` — frozen dataclass YAML loader
+- [x] `aimusic/audio/from_score.py` — `AudioPackageContext` + `validate_package`
+- [x] `aimusic/audio/entry.py` + CLI `render-audio` lazy import
+- [x] `[audio-bridge]` extra in `pyproject.toml` (packaging only)
+- [x] `tests/test_audio_entry.py`; CI tests job installs `.[audio]`
+- [x] Update `docs/audio-next-steps.md`, `tasks/todo.md`
+- [ ] Fork PR → `main`; CI green (push blocked: no GitHub credentials here)
 
 ### Checkpoint: M1 PR2
 
