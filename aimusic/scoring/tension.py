@@ -206,9 +206,160 @@ def target_tension_curve(sections: Sequence["PlanningSection"]) -> List[Tuple[fl
             seg_frac = seg_pos - seg_index
             start_val = arc[seg_index]
             end_val = arc[seg_index + 1]
-            value = start_val + (end_val - start_val) * seg_frac
-            curve.append((float(section.start_time + offset), value))
+            val = start_val + (end_val - start_val) * seg_frac
+            curve.append((float(section.start_time + offset), float(val)))
     return curve
+
+
+def target_tension_at_time(sections: Sequence["PlanningSection"], t: int) -> float:
+    """Return interpolated target tension value for beat t across sections."""
+    for section in sections:
+        if section.start_time <= t < section.end_time:
+            arc = section.target_tension_arc
+            span = section.end_time - section.start_time
+            if span <= 0:
+                return arc[0]
+            offset = t - section.start_time
+            n_segments = len(arc) - 1
+            frac = offset / span
+            seg_pos = frac * n_segments
+            seg_index = min(int(seg_pos), n_segments - 1)
+            seg_frac = seg_pos - seg_index
+            return float(arc[seg_index] + (arc[seg_index + 1] - arc[seg_index]) * seg_frac)
+    return 0.5
+
+
+def transition_target_tension_energy(
+    prev_state: Optional[BeatState],
+    state: BeatState,
+    t: int,
+    target_tension: float,
+    vocabularies: Vocabularies,
+    edo: int,
+    weights: TensionWeights = DEFAULT_WEIGHTS,
+) -> float:
+    """Compute squared deviation between realized tension and target tension."""
+    realized = beat_tension(prev_state, state, vocabularies, edo, weights)
+    diff = realized - target_tension
+    return float(diff * diff)
+
+
+def section_style_energy(
+    prev_state: Optional[BeatState],
+    next_state: BeatState,
+    section: Optional["PlanningSection"],
+    vocabularies: Vocabularies,
+    edo: int = 12,
+) -> float:
+    """Compute section-style deviation energy penalty for transitioning into next_state."""
+    if section is None:
+        return 0.0
+
+    penalty = 0.0
+
+    # Meter deviation
+    if section.allowed_meters:
+        if vocabularies.meters.has_id(next_state.meter_id):
+            meter_label = vocabularies.meters.token_for_id(next_state.meter_id).label
+            if meter_label not in section.allowed_meters:
+                penalty += 1.0
+        else:
+            penalty += 1.0
+
+    # Key region deviation
+    if section.target_key_id is not None:
+        if next_state.key_id != section.target_key_id:
+            if vocabularies.keys.has_id(next_state.key_id) and vocabularies.keys.has_id(section.target_key_id):
+                next_root = vocabularies.keys.token_for_id(next_state.key_id).root_pc
+                target_root = vocabularies.keys.token_for_id(section.target_key_id).root_pc
+                dist = tonal_distance(next_root, target_root, edo)
+                penalty += _decay_normalize(dist) * 0.5
+            else:
+                penalty += 0.5
+
+    # Groove family deviation
+    if section.groove_family:
+        if vocabularies.grooves.has_id(next_state.groove_id):
+            groove_tok = vocabularies.grooves.token_for_id(next_state.groove_id)
+            if groove_tok.family != section.groove_family:
+                penalty += 0.3
+        else:
+            penalty += 0.3
+
+    # Role preference deviation
+    if section.preferred_roles:
+        if vocabularies.roles.has_id(next_state.role_id):
+            role_label = vocabularies.roles.token_for_id(next_state.role_id).label
+            if role_label not in section.preferred_roles:
+                penalty += 0.2
+        else:
+            penalty += 0.2
+
+    return penalty
+
+
+def section_style_breakdown(
+    prev_state: Optional[BeatState],
+    next_state: BeatState,
+    section: Optional["PlanningSection"],
+    vocabularies: Vocabularies,
+    edo: int = 12,
+) -> Dict[str, float]:
+    """Return individual penalty components for section-style deviation."""
+    if section is None:
+        return {
+            "meter_penalty": 0.0,
+            "key_penalty": 0.0,
+            "groove_penalty": 0.0,
+            "role_penalty": 0.0,
+        }
+
+    meter_pen = 0.0
+    if section.allowed_meters:
+        if vocabularies.meters.has_id(next_state.meter_id):
+            meter_label = vocabularies.meters.token_for_id(next_state.meter_id).label
+            if meter_label not in section.allowed_meters:
+                meter_pen = 1.0
+        else:
+            meter_pen = 1.0
+
+    key_pen = 0.0
+    if section.target_key_id is not None:
+        if next_state.key_id != section.target_key_id:
+            if vocabularies.keys.has_id(next_state.key_id) and vocabularies.keys.has_id(section.target_key_id):
+                next_root = vocabularies.keys.token_for_id(next_state.key_id).root_pc
+                target_root = vocabularies.keys.token_for_id(section.target_key_id).root_pc
+                dist = tonal_distance(next_root, target_root, edo)
+                key_pen = _decay_normalize(dist) * 0.5
+            else:
+                key_pen = 0.5
+
+    groove_pen = 0.0
+    if section.groove_family:
+        if vocabularies.grooves.has_id(next_state.groove_id):
+            groove_tok = vocabularies.grooves.token_for_id(next_state.groove_id)
+            if groove_tok.family != section.groove_family:
+                groove_pen = 0.3
+        else:
+            groove_pen = 0.3
+
+    role_pen = 0.0
+    if section.preferred_roles:
+        if vocabularies.roles.has_id(next_state.role_id):
+            role_label = vocabularies.roles.token_for_id(next_state.role_id).label
+            if role_label not in section.preferred_roles:
+                role_pen = 0.2
+        else:
+            role_pen = 0.2
+
+    return {
+        "meter_penalty": meter_pen,
+        "key_penalty": key_pen,
+        "groove_penalty": groove_pen,
+        "role_penalty": role_pen,
+    }
+
+
 
 
 @dataclass(frozen=True)

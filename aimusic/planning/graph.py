@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Mapping, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Mapping, Optional, Sequence, Tuple
+if TYPE_CHECKING:
+    from aimusic.planning.plans import PlanningSection
 
 _logger = logging.getLogger(__name__)
 
@@ -344,11 +346,17 @@ def _build_prior_context(
     source_state: BeatState,
     end_layer: Layer,
     time_index: int,
+    section=None,
+    target_tension: Optional[float] = None,
 ) -> PriorContext:
     future_hints = end_layer.states[: min(3, len(end_layer.states))]
+    section_name = section.name if section is not None else None
     return PriorContext(
         history=(source_state,),
         future_hints=future_hints,
+        section_name=section_name,
+        target_tension=target_tension,
+        section=section,
         metadata=(("graph_time", str(time_index)),),
     )
 
@@ -540,6 +548,7 @@ def build_sparse_graph(
     d_max: int,
     proposal_budget: Optional[int] = None,
     prior_guided_proposals: Optional[bool] = None,
+    sections: Optional[Sequence[PlanningSection]] = None,
 ) -> tuple[SparseGraph, RNGKey]:
     """Build a bounded sparse graph of BeatState transitions.
 
@@ -594,6 +603,15 @@ def build_sparse_graph(
         final_step = next_time == end_layer.time_index
         steps_remaining = end_layer.time_index - next_time
 
+        current_section = None
+        current_target_tension = None
+        if sections is not None:
+            from aimusic.planning.plans import get_section_at_time
+            from aimusic.scoring.tension import target_tension_at_time
+
+            current_section = get_section_at_time(sections, current_time)
+            current_target_tension = target_tension_at_time(sections, current_time)
+
         raw_candidate_count = 0
         raw_edge_count = 0
         outdegree_pruned_count = 0
@@ -619,12 +637,22 @@ def build_sparse_graph(
                     style_config=resolved_style,
                     vocabularies=resolved_vocabs,
                     prior=resolved_prior,
-                    context=_build_prior_context(source_state, end_layer, current_time),
+                    context=_build_prior_context(
+                        source_state,
+                        end_layer,
+                        current_time,
+                        section=current_section,
+                        target_tension=current_target_tension,
+                    ),
                     edo=resolved_edo,
                     key=current_key,
                     d_max=d_max,
                     proposal_budget=resolved_proposal_budget,
                     prior_guided_proposals=resolved_prior_guided_proposals,
+                    section=current_section,
+                    section_guided_proposals=(
+                        weights is not None and weights.lambda_section_style > 0.0
+                    ),
                 )
 
             raw_candidate_count += candidate_result.proposed_count
@@ -632,7 +660,13 @@ def build_sparse_graph(
             scored_candidate_count += candidate_result.scored_count
             rejected.extend(candidate_result.rejections)
 
-            source_context = _build_prior_context(source_state, end_layer, current_time)
+            source_context = _build_prior_context(
+                source_state,
+                end_layer,
+                current_time,
+                section=current_section,
+                target_tension=current_target_tension,
+            )
             queries = tuple(
                 PriorQuery(
                     prev_state=source_state,

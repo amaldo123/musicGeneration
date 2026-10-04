@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Optional, Sequence, Tuple, Iterator
+from typing import TYPE_CHECKING, Iterator, Mapping, Optional, Sequence, Tuple
+if TYPE_CHECKING:
+    from aimusic.planning.plans import PlanningSection
 
 from aimusic.core.config import StyleConfig
 from aimusic.core.core_types import BeatState
@@ -382,10 +384,18 @@ def propose_meter_ids(
     prev_state: BeatState,
     style_config: StyleConfig,
     vocabularies: Vocabularies,
+    section: Optional["PlanningSection"] = None,
 ) -> Tuple[int, ...]:
     proposals = [prev_state.meter_id]
     if prev_state.boundary_lvl >= 2 and prev_state.beat_in_bar == 0:
         proposals.extend(_allowed_meter_ids(style_config, vocabularies))
+    if section is not None and section.allowed_meters:
+        sec_meter_ids = [
+            vocabularies.meters.token_for_label(m).id
+            for m in section.allowed_meters
+            if m in vocabularies.meters.label_map
+        ]
+        proposals = [m for m in sec_meter_ids if m in proposals] + [m for m in proposals if m not in sec_meter_ids]
     return tuple(dict.fromkeys(proposals))
 
 
@@ -394,6 +404,8 @@ def propose_boundary_levels(
     next_meter_id: int,
     next_beat_in_bar: int,
     vocabularies: Vocabularies,
+    section: Optional["PlanningSection"] = None,
+    t: Optional[int] = None,
 ) -> Tuple[int, ...]:
     proposals = [vocabularies.boundaries.token_for_label("none").id]
     if _is_strong_beat(next_meter_id, next_beat_in_bar, vocabularies):
@@ -401,6 +413,10 @@ def propose_boundary_levels(
     if next_beat_in_bar == 0:
         proposals.append(vocabularies.boundaries.token_for_label("phrase").id)
         proposals.append(vocabularies.boundaries.token_for_label("section").id)
+    if section is not None and section.boundary_level > 0 and next_beat_in_bar == 0:
+        if t is not None and t == section.start_time:
+            target_lvl = section.boundary_level
+            proposals.sort(key=lambda lvl: 0 if lvl == target_lvl else 1)
     return tuple(dict.fromkeys(proposals))
 
 
@@ -410,6 +426,7 @@ def propose_role_ids(
     next_beat_in_bar: int,
     next_boundary_lvl: int,
     vocabularies: Vocabularies,
+    section: Optional["PlanningSection"] = None,
 ) -> Tuple[int, ...]:
     prev_role = _role_label(prev_state, vocabularies)
     allowed_labels = set(LEGAL_ROLE_SUCCESSORS[prev_role])
@@ -422,10 +439,18 @@ def propose_role_ids(
     if next_boundary_lvl == 0:
         allowed_labels.discard("cad")
 
-    return tuple(
+    role_ids = [
         vocabularies.roles.token_for_label(label).id
         for label in sorted(allowed_labels)
-    )
+    ]
+    if section is not None and section.preferred_roles:
+        pref_ids = set(
+            vocabularies.roles.token_for_label(r).id
+            for r in section.preferred_roles
+            if r in vocabularies.roles.label_map
+        )
+        role_ids.sort(key=lambda r_id: 0 if r_id in pref_ids else 1)
+    return tuple(role_ids)
 
 
 def propose_key_ids(
@@ -434,11 +459,15 @@ def propose_key_ids(
     next_role_id: int,
     vocabularies: Vocabularies,
     edo: Optional[int] = None,
+    section: Optional["PlanningSection"] = None,
 ) -> Tuple[int, ...]:
     resolved_edo = _edo_size(vocabularies) if edo is None else edo
     validate_vocabulary_compatibility(vocabularies, resolved_edo)
     role_label = vocabularies.roles.token_for_id(next_role_id).label
     proposals = [prev_state.key_id]
+    if section is not None and section.target_key_id is not None:
+        if vocabularies.keys.has_id(section.target_key_id):
+            proposals.insert(0, section.target_key_id)
     if next_boundary_lvl >= 2 or role_label in {"change", "cad"}:
         for root_pc in nearest_roots(
             _key_root(prev_state, vocabularies), resolved_edo, limit=2
@@ -522,6 +551,7 @@ def propose_groove_ids(
     next_boundary_lvl: int,
     next_role_id: int,
     vocabularies: Vocabularies,
+    section: Optional["PlanningSection"] = None,
 ) -> Tuple[int, ...]:
     prev_groove = _groove_token_by_id(prev_state.groove_id, vocabularies)
     next_role = vocabularies.roles.token_for_id(next_role_id).label
@@ -538,7 +568,14 @@ def propose_groove_ids(
                 proposals.append(groove.id)
                 seen_families.add(groove.family)
 
+    if section is not None and section.groove_family:
+        sec_family = section.groove_family
+        sec_grooves = [g.id for g in vocabularies.grooves if g.family == sec_family]
+        if sec_grooves:
+            proposals = sec_grooves + [g for g in proposals if g not in sec_grooves]
+
     return tuple(dict.fromkeys(proposals))
+
 
 def _candidate_generator(
     prev_state: BeatState,
@@ -549,33 +586,67 @@ def _candidate_generator(
     key: RNGKey,
     edo: int,
     key_state: Optional[list[RNGKey]] = None,
+    section: Optional["PlanningSection"] = None,
+    section_guided_proposals: bool = False,
+    t: Optional[int] = None,
 ) -> Iterator[BeatState]:
     """Yields candidate states iteratively to avoid combinatorial memory explosions."""
     
     current_key = key
 
-    def _shuffled(items: Sequence[int]) -> Tuple[int, ...]:
+    sec_meter_ids = (
+        set(vocabs.meters.token_for_label(m).id for m in section.allowed_meters if m in vocabs.meters.label_map)
+        if section_guided_proposals and section and section.allowed_meters else None
+    )
+    sec_boundary_ids = (
+        {section.boundary_level}
+        if section_guided_proposals and section and section.boundary_level > 0 and vocabs.boundaries.has_id(section.boundary_level) else None
+    )
+    sec_role_ids = (
+        set(vocabs.roles.token_for_label(r).id for r in section.preferred_roles if r in vocabs.roles.label_map)
+        if section_guided_proposals and section and section.preferred_roles else None
+    )
+    sec_groove_ids = (
+        set(g.id for g in vocabs.grooves if g.family == section.groove_family)
+        if section_guided_proposals and section and section.groove_family else None
+    )
+    sec_key_ids = (
+        {section.target_key_id}
+        if section_guided_proposals and section and section.target_key_id is not None and vocabs.keys.has_id(section.target_key_id) else None
+    )
+
+    def _shuffled_prioritized(items: Sequence[int], priority_set: Optional[set[int]] = None) -> Tuple[int, ...]:
         nonlocal current_key
-        shuffled, current_key = shuffle(current_key, items)
+        if not priority_set or not items:
+            shuffled, current_key = shuffle(current_key, items)
+            if key_state is not None:
+                key_state[0] = current_key
+            return shuffled
+        pref = [x for x in items if x in priority_set]
+        other = [x for x in items if x not in priority_set]
+        pref_shuffled, current_key = shuffle(current_key, pref)
+        other_shuffled, current_key = shuffle(current_key, other)
         if key_state is not None:
             key_state[0] = current_key
-        return shuffled
+        return pref_shuffled + other_shuffled
 
-    for meter_id in _shuffled(propose_meter_ids(prev_state, style, vocabs)):
+    sec_arg = section if section_guided_proposals else None
+    for meter_id in _shuffled_prioritized(propose_meter_ids(prev_state, style, vocabs, section=sec_arg), sec_meter_ids):
         beat_in_bar = _next_beat_index(prev_state, meter_id, vocabs)
-        for bound_lvl in _shuffled(propose_boundary_levels(prev_state, meter_id, beat_in_bar, vocabs)):
-            for role_id in _shuffled(propose_role_ids(prev_state, meter_id, beat_in_bar, bound_lvl, vocabs)):
-                for groove_id in _shuffled(propose_groove_ids(prev_state, bound_lvl, role_id, vocabs)):
-                    for key_id in _shuffled(
+        for bound_lvl in _shuffled_prioritized(propose_boundary_levels(prev_state, meter_id, beat_in_bar, vocabs, section=sec_arg, t=t), sec_boundary_ids):
+            for role_id in _shuffled_prioritized(propose_role_ids(prev_state, meter_id, beat_in_bar, bound_lvl, vocabs, section=sec_arg), sec_role_ids):
+                for groove_id in _shuffled_prioritized(propose_groove_ids(prev_state, bound_lvl, role_id, vocabs, section=sec_arg), sec_groove_ids):
+                    for key_id in _shuffled_prioritized(
                         propose_key_ids(
-                            prev_state, bound_lvl, role_id, vocabs, edo=edo
-                        )
+                            prev_state, bound_lvl, role_id, vocabs, edo=edo, section=sec_arg
+                        ),
+                        sec_key_ids,
                     ):
-                        for chord_id in _shuffled(propose_chord_ids(
+                        for chord_id in _shuffled_prioritized(propose_chord_ids(
                             prev_state, key_id, meter_id, beat_in_bar, bound_lvl,
                             role_id, groove_id, prior, context, vocabs, edo=edo
                         )):
-                            for head_id in _shuffled(propose_head_ids(chord_id, meter_id, beat_in_bar, bound_lvl, role_id, vocabs)):
+                            for head_id in _shuffled_prioritized(propose_head_ids(chord_id, meter_id, beat_in_bar, bound_lvl, role_id, vocabs)):
                                 yield BeatState(
                                     meter_id=meter_id,
                                     beat_in_bar=beat_in_bar,
@@ -607,23 +678,10 @@ def get_valid_next_states(
     edo: Optional[int] = None,
     proposal_budget: Optional[int] = None,
     prior_guided_proposals: bool = False,
+    section: Optional["PlanningSection"] = None,
+    section_guided_proposals: bool = False,
 ) -> tuple[CandidateGenerationResult, RNGKey]:
-    """Generate a bounded pool of legal BeatState successors for one source state.
-
-    REQ-13: proposal generation is bounded by ``proposal_budget`` (a beam
-    width over *raw proposals*), not by ``d_max``. The full budgeted pool is
-    deduplicated, legality-checked, and -- when ``prior_guided_proposals`` is
-    set and a real prior is supplied -- batch-scored and ranked by prior
-    log-probability with deterministic tie-breaking. ``d_max`` is not applied
-    here at all; it is consulted exactly once, downstream, when
-    ``aimusic.planning.graph.build_sparse_graph`` trims *scored edges* to the
-    retained outdegree. This keeps D_max's two former meanings (proposal
-    stopping condition vs. retained-edge cap) from colliding.
-
-    ``d_max`` is still accepted (and still validated) here for API stability
-    and because callers commonly want to size their own budget relative to
-    it, but it no longer bounds what this function returns.
-    """
+    """Generate a bounded pool of legal BeatState successors for one source state."""
     if not isinstance(key, RNGKey):
         raise TypeError("key must be an RNGKey.")
     if not isinstance(d_max, int) or isinstance(d_max, bool) or d_max < 1:
@@ -645,6 +703,7 @@ def get_valid_next_states(
 
     # 1. Generate: consume the (shuffled, lazy) generator up to the proposal
     #    budget -- this is the only place raw-proposal volume is bounded.
+    effective_section_guided = section_guided_proposals
     key_state = [key]
     candidate_gen = _candidate_generator(
         prev_state,
@@ -655,6 +714,9 @@ def get_valid_next_states(
         key,
         resolved_edo,
         key_state,
+        section=section,
+        section_guided_proposals=effective_section_guided,
+        t=t,
     )
 
     for candidate in candidate_gen:
@@ -684,7 +746,20 @@ def get_valid_next_states(
             )
 
     unique_count = len(seen)
-    legal_states = tuple(sorted(accepted, key=_state_sort_key))
+    if section_guided_proposals and section is not None:
+        from aimusic.scoring.tension import section_style_energy
+
+        legal_states = tuple(
+            sorted(
+                accepted,
+                key=lambda s: (
+                    section_style_energy(prev_state, s, section, resolved_vocabs, resolved_edo),
+                    _state_sort_key(s),
+                ),
+            )
+        )
+    else:
+        legal_states = tuple(sorted(accepted, key=_state_sort_key))
     scores: Tuple[float, ...] = ()
 
     # 4. Batch-score (optional prior-guided ranking of the legal pool only).

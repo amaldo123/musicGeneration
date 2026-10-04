@@ -23,6 +23,7 @@ class StructuralDiagnostics:
     tension_curve: List[Tuple[float, float]] = field(default_factory=list)
     target_tension_curve: List[Tuple[float, float]] = field(default_factory=list)
     tension_deviation: Dict[str, Any] = field(default_factory=dict)
+    transition_diagnostics: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -34,6 +35,7 @@ class StructuralDiagnostics:
             "tension_curve": self.tension_curve,
             "target_tension_curve": self.target_tension_curve,
             "tension_deviation": self.tension_deviation,
+            "transition_diagnostics": self.transition_diagnostics,
         }
 
 @dataclass

@@ -24,7 +24,6 @@ from aimusic.core.rng import RNGKey, allocate_named_keys, random_unit
 from aimusic.core.vocab import TonalContext, Vocabularies, build_tonal_context
 from aimusic.decode import decode_path_to_score
 from aimusic.planning.graph import EdgeScoreDiagnostics, SparseGraph, build_sparse_graph
-from aimusic.render import render_midi
 from aimusic.planning.sb import (
     SBProblem,
     SBSolution,
@@ -69,13 +68,18 @@ def _state_sort_key(state: BeatState) -> tuple[int, int, int, int, int, int, int
 
 @dataclass(frozen=True)
 class PlanningSection:
-    """Single section descriptor for structural planning diagnostics."""
+    """Single section descriptor for structural planning and generative section guidance."""
 
     name: str
     start_time: int
     end_time: int
     boundary_level: int
     target_tension_arc: Tuple[float, ...] = (0.2, 0.85, 0.25)
+    allowed_meters: Optional[Tuple[str, ...]] = None
+    groove_family: Optional[str] = None
+    target_key_id: Optional[int] = None
+    target_density: Optional[float] = None
+    preferred_roles: Optional[Tuple[str, ...]] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
@@ -92,6 +96,37 @@ class PlanningSection:
             _require_real(f"target_tension_arc[{idx}]", value)
         object.__setattr__(self, "target_tension_arc", arc)
 
+        if self.allowed_meters is not None:
+            meters = tuple(self.allowed_meters)
+            if not meters or any(not isinstance(m, str) or not m.strip() for m in meters):
+                raise ValueError("allowed_meters must be a tuple of non-empty strings.")
+            object.__setattr__(self, "allowed_meters", meters)
+        if self.groove_family is not None:
+            if not isinstance(self.groove_family, str) or not self.groove_family.strip():
+                raise ValueError("groove_family must be a non-empty string.")
+        if self.target_key_id is not None:
+            _require_int("target_key_id", self.target_key_id, minimum=0)
+        if self.target_density is not None:
+            _require_real("target_density", self.target_density, minimum=0.0)
+            if self.target_density > 1.0:
+                raise ValueError("target_density must be <= 1.0.")
+        if self.preferred_roles is not None:
+            roles = tuple(self.preferred_roles)
+            if not roles or any(not isinstance(r, str) or not r.strip() for r in roles):
+                raise ValueError("preferred_roles must be a tuple of non-empty strings.")
+            object.__setattr__(self, "preferred_roles", roles)
+
+
+def get_section_at_time(
+    sections: Sequence[PlanningSection], t: int
+) -> Optional[PlanningSection]:
+    """Find the PlanningSection governing beat time index t."""
+    for section in sections:
+        if section.start_time <= t < section.end_time:
+            return section
+    return None
+
+
 
 @dataclass(frozen=True)
 class MethodARunConfig:
@@ -107,6 +142,7 @@ class MethodARunConfig:
     plan_config: PlanConfig = field(default_factory=PlanConfig)
     neural_prior_config: NeuralPriorConfig = field(default_factory=NeuralPriorConfig)
     edo: int = 12
+    sections: Optional[Tuple[PlanningSection, ...]] = None
 
     def __post_init__(self) -> None:
         _require_int("total_beats", self.total_beats, minimum=1)
@@ -125,6 +161,13 @@ class MethodARunConfig:
             raise ValueError(
                 "SECTION_WISE planning requires total_beats >= len(section_names)."
             )
+        if self.sections is not None:
+            secs = tuple(self.sections)
+            if not secs:
+                raise ValueError("sections tuple cannot be empty.")
+            if any(not isinstance(s, PlanningSection) for s in secs):
+                raise TypeError("sections must contain only PlanningSection instances.")
+            object.__setattr__(self, "sections", secs)
 
 
 @dataclass(frozen=True)
@@ -160,6 +203,26 @@ class MethodAEndpoints:
 
 
 @dataclass(frozen=True)
+class TransitionDiagnostic:
+    """Per-transition diagnostic metrics for a selected path."""
+
+    time_index: int
+    source_state: BeatState
+    target_state: BeatState
+    data_logp: float
+    gttm_energy: float
+    gttm_family_breakdown: Dict[str, float]
+    target_tension: float
+    realized_tension: float
+    tension_deviation: float
+    target_tension_penalty: float
+    section_style_penalty: float
+    section_style_breakdown: Dict[str, float]
+    total_log_weight: float
+
+
+
+@dataclass(frozen=True)
 class MethodAPlanDiagnostics:
     """Inspectable diagnostics emitted by Method A orchestration."""
 
@@ -175,6 +238,7 @@ class MethodAPlanDiagnostics:
     bridge_iterations: int
     bridge_converged: bool
     rng_stream_ids: Tuple[str, ...]
+    transition_diagnostics: Tuple[TransitionDiagnostic, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -297,6 +361,9 @@ def _choose_endpoint_state(
 
 
 def build_section_plan(run_config: MethodARunConfig) -> Tuple[PlanningSection, ...]:
+    if run_config.sections is not None:
+        return run_config.sections
+
     plan_config = run_config.plan_config
     if plan_config.sectioning_strategy is SectioningStrategy.SINGLE_PASS:
         name = (
@@ -310,6 +377,8 @@ def build_section_plan(run_config: MethodARunConfig) -> Tuple[PlanningSection, .
                 start_time=0,
                 end_time=run_config.total_beats,
                 boundary_level=3,
+                allowed_meters=run_config.style_config.allowed_meters,
+                groove_family=run_config.style_config.groove_families[0] if run_config.style_config.groove_families else None,
             ),
         )
 
@@ -323,9 +392,11 @@ def build_section_plan(run_config: MethodARunConfig) -> Tuple[PlanningSection, .
     remainder = run_config.total_beats % section_count
     sections = []
     cursor = 0
+    groove_fams = run_config.style_config.groove_families
     for idx, name in enumerate(section_names):
         length = chunk + (1 if idx < remainder else 0)
         next_cursor = cursor + max(1, length)
+        groove_fam = groove_fams[idx % len(groove_fams)] if groove_fams else None
         sections.append(
             PlanningSection(
                 name=name,
@@ -333,6 +404,8 @@ def build_section_plan(run_config: MethodARunConfig) -> Tuple[PlanningSection, .
                 end_time=next_cursor,
                 boundary_level=3 if idx == section_count - 1 else 2,
                 target_tension_arc=(0.2 + (0.1 * idx), 0.8, 0.25),
+                allowed_meters=run_config.style_config.allowed_meters,
+                groove_family=groove_fam,
             )
         )
         cursor = next_cursor
@@ -344,6 +417,11 @@ def build_section_plan(run_config: MethodARunConfig) -> Tuple[PlanningSection, .
             end_time=run_config.total_beats,
             boundary_level=last.boundary_level,
             target_tension_arc=last.target_tension_arc,
+            allowed_meters=last.allowed_meters,
+            groove_family=last.groove_family,
+            target_key_id=last.target_key_id,
+            target_density=last.target_density,
+            preferred_roles=last.preferred_roles,
         )
     return tuple(sections)
 
@@ -393,6 +471,9 @@ def _candidate_score(
     is_start: bool,
     boundary_level: int,
     primary_key_id: int,
+    section: Optional[PlanningSection] = None,
+    vocabularies: Optional[Vocabularies] = None,
+    weights: Optional[PriorWeights] = None,
 ) -> float:
     score = 0.0
     score += 2.0 if state.beat_in_bar == 0 else 0.4
@@ -404,6 +485,30 @@ def _candidate_score(
     else:
         score += 1.1 if state.role_id == 3 else 0.4
         score += 0.8 if state.head_id == 1 else 0.3
+
+    if weights is not None and section is not None and vocabularies is not None:
+        if weights.lambda_section_style > 0.0:
+            if section.allowed_meters and vocabularies.meters.has_id(state.meter_id):
+                meter_label = vocabularies.meters.token_for_id(state.meter_id).label
+                if meter_label in section.allowed_meters:
+                    score += 1.0 * weights.lambda_section_style
+            if section.target_key_id is not None and state.key_id == section.target_key_id:
+                score += 1.5 * weights.lambda_section_style
+            if section.groove_family and vocabularies.grooves.has_id(state.groove_id):
+                groove_tok = vocabularies.grooves.token_for_id(state.groove_id)
+                if groove_tok.family == section.groove_family:
+                    score += 1.0 * weights.lambda_section_style
+            if section.preferred_roles and vocabularies.roles.has_id(state.role_id):
+                role_label = vocabularies.roles.token_for_id(state.role_id).label
+                if role_label in section.preferred_roles:
+                    score += 1.0 * weights.lambda_section_style
+        if weights.lambda_target_tension > 0.0:
+            target_t = section.target_tension_arc[0] if is_start else section.target_tension_arc[-1]
+            from aimusic.scoring.tension import beat_tension
+            rel_t = beat_tension(None, state, vocabularies, len(vocabularies.keys))
+            dev = abs(rel_t - target_t)
+            score -= dev * 2.0 * weights.lambda_target_tension
+
     return score
 
 
@@ -414,23 +519,66 @@ def _build_endpoint_distribution(
     is_start: bool,
     run_config: MethodARunConfig,
     vocabularies: Vocabularies,
+    sections: Optional[Sequence[PlanningSection]] = None,
 ) -> EndpointDistribution:
     plan_config = run_config.plan_config
-    groove_ids = _groove_anchor_ids(run_config.style_config, vocabularies)
-    key_ids = _key_anchor_ids(run_config, vocabularies)
+    sec = (
+        get_section_at_time(sections, time_index if is_start else max(0, time_index - 1))
+        if sections
+        else None
+    )
+
+    has_style_guidance = (
+        sec is not None
+        and run_config.prior_weights is not None
+        and run_config.prior_weights.lambda_section_style > 0.0
+    )
+
+    groove_ids = list(_groove_anchor_ids(run_config.style_config, vocabularies))
+    if has_style_guidance and sec is not None and sec.groove_family:
+        sec_grooves = [g.id for g in vocabularies.grooves if g.family == sec.groove_family]
+        if sec_grooves:
+            groove_ids = list(dict.fromkeys(sec_grooves + groove_ids))
+
+    key_ids = list(_key_anchor_ids(run_config, vocabularies))
+    if has_style_guidance and sec is not None and sec.target_key_id is not None and vocabularies.keys.has_id(sec.target_key_id):
+        key_ids = list(dict.fromkeys([sec.target_key_id] + key_ids))
+
     head_ids = (1, 2)
     chord_qualities = ("maj", "min")
 
     scored_candidates: list[tuple[float, BeatState]] = []
-    for meter_id in _meter_ids(run_config.style_config, vocabularies):
+    allowed_meter_ids = _meter_ids(run_config.style_config, vocabularies)
+    if has_style_guidance and sec is not None and sec.allowed_meters:
+        sec_meters = [
+            vocabularies.meters.token_for_label(m).id
+            for m in sec.allowed_meters
+            if m in vocabularies.meters.label_map
+        ]
+        if sec_meters:
+            allowed_meter_ids = tuple(dict.fromkeys(sec_meters + list(allowed_meter_ids)))
+
+    for meter_id in allowed_meter_ids:
         beat_in_bar = beat_in_bar_by_meter[meter_id]
         strong_beats = vocabularies.meters.token_for_id(meter_id).strong_beats
         boundary_level = _endpoint_boundary_level(is_start=is_start, beat_in_bar=beat_in_bar, strong_beats=strong_beats)
-        # Cadence and change roles require a boundary on strong beats
+        if has_style_guidance and sec is not None and sec.boundary_level > 0 and beat_in_bar == 0:
+            boundary_level = sec.boundary_level
+
         if is_start or boundary_level > 0:
             role_ids = (0, 1) if is_start else (3, 2)
         else:
             role_ids = (0, 1)
+
+        if has_style_guidance and sec is not None and sec.preferred_roles:
+            pref_roles = [
+                vocabularies.roles.token_for_label(r).id
+                for r in sec.preferred_roles
+                if r in vocabularies.roles.label_map
+            ]
+            if pref_roles:
+                role_ids = tuple(dict.fromkeys(pref_roles + list(role_ids)))
+
         for key_id in key_ids:
             for quality in chord_qualities:
                 chord_id = _chord_id_for(key_id, quality, vocabularies)
@@ -452,6 +600,9 @@ def _build_endpoint_distribution(
                                 is_start=is_start,
                                 boundary_level=boundary_level,
                                 primary_key_id=key_ids[0],
+                                section=sec,
+                                vocabularies=vocabularies,
+                                weights=run_config.prior_weights,
                             )
                             score += (
                                 run_config.plan_config.start_anchor_weight
@@ -480,10 +631,12 @@ def _build_endpoint_distribution(
     )
 
 
+
 def generate_start_endpoint_distribution(
     run_config: MethodARunConfig,
     *,
     vocabularies: Optional[Vocabularies] = None,
+    sections: Optional[Sequence[PlanningSection]] = None,
 ) -> EndpointDistribution:
     resolved_vocabs = _resolved_vocabs(
         vocabularies, run_config.style_config, run_config.edo
@@ -495,6 +648,7 @@ def generate_start_endpoint_distribution(
         is_start=True,
         run_config=run_config,
         vocabularies=resolved_vocabs,
+        sections=sections,
     )
 
 
@@ -502,6 +656,7 @@ def generate_end_endpoint_distribution(
     run_config: MethodARunConfig,
     *,
     vocabularies: Optional[Vocabularies] = None,
+    sections: Optional[Sequence[PlanningSection]] = None,
 ) -> EndpointDistribution:
     resolved_vocabs = _resolved_vocabs(
         vocabularies, run_config.style_config, run_config.edo
@@ -516,6 +671,7 @@ def generate_end_endpoint_distribution(
         is_start=False,
         run_config=run_config,
         vocabularies=resolved_vocabs,
+        sections=sections,
     )
 
 
@@ -531,8 +687,9 @@ def generate_method_a_endpoints(
     resolved_vocabs = _resolved_vocabs(
         vocabularies, run_config.style_config, run_config.edo
     )
-    pi0 = generate_start_endpoint_distribution(run_config, vocabularies=resolved_vocabs)
-    piT = generate_end_endpoint_distribution(run_config, vocabularies=resolved_vocabs)
+    sections = build_section_plan(run_config)
+    pi0 = generate_start_endpoint_distribution(run_config, vocabularies=resolved_vocabs, sections=sections)
+    piT = generate_end_endpoint_distribution(run_config, vocabularies=resolved_vocabs, sections=sections)
     start_choice, next_key = _choose_endpoint_state(
         pi0,
         key=key,
@@ -548,7 +705,7 @@ def generate_method_a_endpoints(
         piT=piT,
         start_choice=start_choice,
         end_choice=end_choice,
-        sections=build_section_plan(run_config),
+        sections=sections,
     ), next_key
 
 
@@ -602,6 +759,7 @@ def run_method_a(
         edo=run_config.edo,
         key=streams["candidate_proposal"],
         d_max=resolved_sb.d_max,
+        sections=endpoints.sections,
     )
     _logger.info(f"Graph built: {len(graph.layers)} layers, {sum(len(l.states) for l in graph.layers)} states")
     aligned_endpoints = MethodAEndpoints(
@@ -626,6 +784,78 @@ def run_method_a(
         sampled_path = None
         _logger.info(f"MAP path: {len(path) - 1} beats")
 
+    from aimusic.scoring.gttm_features import calculate_gttm_energy, transition_family_scores
+    from aimusic.scoring.priors import PriorContext
+    from aimusic.scoring.tension import (
+        beat_tension,
+        section_style_breakdown,
+        section_style_energy,
+        target_tension_at_time,
+    )
+
+    trans_diags: list[TransitionDiagnostic] = []
+    prev_st: Optional[BeatState] = None
+    for idx, st in enumerate(path):
+        if idx > 0 and prev_st is not None:
+            t = idx - 1
+            t_tension = target_tension_at_time(endpoints.sections, t)
+            r_tension = beat_tension(prev_st, st, resolved_vocabs, run_config.edo)
+            dev = r_tension - t_tension
+            sec = get_section_at_time(endpoints.sections, t)
+            t_pen = run_config.prior_weights.lambda_target_tension * (dev ** 2)
+            s_pen = run_config.prior_weights.lambda_section_style * section_style_energy(
+                prev_st, st, sec, resolved_vocabs, run_config.edo
+            )
+            s_breakdown = section_style_breakdown(
+                prev_st, st, sec, resolved_vocabs, run_config.edo
+            )
+            data_logp = (
+                prior.logp_next(
+                    prev_st,
+                    st,
+                    t,
+                    PriorContext(history=(prev_st,), section_name=sec.name if sec else None),
+                )
+                if prior is not None
+                else 0.0
+            )
+            gttm_e = calculate_gttm_energy(
+                prev_st,
+                st,
+                t,
+                vocabularies=resolved_vocabs,
+                edo=run_config.edo,
+                weights=run_config.prior_weights,
+            )
+            gttm_families = transition_family_scores(
+                prev_st, st, t, vocabularies=resolved_vocabs, edo=run_config.edo
+            )
+            edge_weight = 0.0
+            if t < len(graph.edges_by_time):
+                for e in graph.edges_by_time[t]:
+                    if e.source == prev_st and e.target == st:
+                        edge_weight = e.log_weight
+                        break
+            trans_diags.append(
+                TransitionDiagnostic(
+                    time_index=t,
+                    source_state=prev_st,
+                    target_state=st,
+                    data_logp=float(data_logp),
+                    gttm_energy=float(gttm_e),
+                    gttm_family_breakdown=gttm_families,
+                    target_tension=t_tension,
+                    realized_tension=r_tension,
+                    tension_deviation=dev,
+                    target_tension_penalty=t_pen,
+                    section_style_penalty=s_pen,
+                    section_style_breakdown=s_breakdown,
+                    total_log_weight=edge_weight,
+                )
+            )
+        prev_st = st
+
+
     diagnostics = MethodAPlanDiagnostics(
         section_tags=tuple(section.name for section in endpoints.sections),
         target_tension_arcs=tuple(section.target_tension_arc for section in endpoints.sections),
@@ -639,6 +869,7 @@ def run_method_a(
         bridge_iterations=solution.trace.iterations,
         bridge_converged=solution.trace.converged,
         rng_stream_ids=stream_ids,
+        transition_diagnostics=tuple(trans_diags),
     )
     return MethodAPlanResult(
         run_config=run_config,
@@ -696,6 +927,9 @@ def render_exact_bridge_demo(
         tempo_bpm=tempo_bpm,
         key=next_key,
     )
+    from aimusic.render import render_midi
+    from aimusic.theory.tonal import EDO
+
     render_midi(
         score,
         EDO(EDOConfig(n=plan_result.tonal_context.n, base_tuning=0)),

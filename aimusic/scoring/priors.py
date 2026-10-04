@@ -15,6 +15,7 @@ from aimusic.core.config import (
 from aimusic.core.core_types import BeatState
 from aimusic.scoring.gttm_features import (
     TransitionWindow,
+    calculate_gttm_energy,
     transition_feature_vector,
     weighted_feature_breakdown,
 )
@@ -252,9 +253,11 @@ class PriorContext:
     history: Tuple[BeatState, ...] = ()
     future_hints: Tuple[BeatState, ...] = ()
     section_name: Optional[str] = None
+    target_tension: Optional[float] = None
     metadata: MetadataPairs = ()
     history_tokens: Optional[StructuralTokenSequence] = None
     future_hint_tokens: Optional[StructuralTokenSequence] = None
+    section: Optional[object] = None
 
     def __post_init__(self) -> None:
         history = _coerce_state_tuple("history", self.history)
@@ -264,6 +267,8 @@ class PriorContext:
 
         if self.section_name is not None:
             _require_non_empty_str("section_name", self.section_name)
+        if self.target_tension is not None:
+            _require_real("target_tension", self.target_tension)
 
         metadata = _coerce_metadata("metadata", self.metadata)
         object.__setattr__(self, "metadata", metadata)
@@ -811,20 +816,62 @@ def calculate_transition_log_weight(
     meters=None,
     vocabularies=None,
     edo: Optional[int] = None,
+    target_tension: Optional[float] = None,
+    section: Optional[object] = None,
 ) -> float:
-    """Combine prior data likelihood and GTTM energy into one graph-ready edge weight."""
-    return calculate_transition_score_breakdown(
+    """Combine prior data likelihood, GTTM energy, target tension deviation, and section style energy into one edge weight."""
+    resolved_weights = PriorWeights() if weights is None else weights
+    data_logp = float(prior.logp_next(prev_state, next_state, t, context))
+    gttm_energy = calculate_gttm_energy(
         prev_state,
         next_state,
         t,
-        prior=prior,
-        context=context,
         window=window,
-        weights=weights,
+        weights=resolved_weights,
         meters=meters,
         vocabularies=vocabularies,
         edo=edo,
-    ).final_log_weight
+    )
+    score = (resolved_weights.lambda_data * data_logp) - (resolved_weights.lambda_gttm * gttm_energy)
+
+    effective_target_tension = (
+        target_tension if target_tension is not None
+        else (context.target_tension if context is not None else None)
+    )
+    from aimusic.core.vocab import DEFAULT_VOCABULARIES
+    resolved_vocabs = DEFAULT_VOCABULARIES if vocabularies is None else vocabularies
+    resolved_edo = len(resolved_vocabs.keys) if edo is None else edo
+
+    if resolved_weights.lambda_target_tension > 0.0 and effective_target_tension is not None:
+        from aimusic.scoring.tension import transition_target_tension_energy
+
+        tension_energy = transition_target_tension_energy(
+            prev_state,
+            next_state,
+            t,
+            effective_target_tension,
+            resolved_vocabs,
+            resolved_edo,
+        )
+        score -= resolved_weights.lambda_target_tension * tension_energy
+
+    effective_section = (
+        section if section is not None
+        else (context.section if context is not None else None)
+    )
+    if resolved_weights.lambda_section_style > 0.0 and effective_section is not None:
+        from aimusic.scoring.tension import section_style_energy
+
+        sec_energy = section_style_energy(
+            prev_state,
+            next_state,
+            effective_section,  # type: ignore[arg-type]
+            resolved_vocabs,
+            resolved_edo,
+        )
+        score -= resolved_weights.lambda_section_style * sec_energy
+
+    return score
 
 
 def calculate_transition_log_weights(
@@ -836,20 +883,77 @@ def calculate_transition_log_weights(
     meters=None,
     vocabularies=None,
     edo: Optional[int] = None,
+    target_tensions: Optional[Sequence[Optional[float]]] = None,
+    sections: Optional[Sequence[Optional[object]]] = None,
 ) -> Tuple[float, ...]:
-    """Batch version of transition log-weight scoring."""
-    return tuple(
-        item.final_log_weight
-        for item in calculate_transition_score_breakdowns(
-            queries,
-            prior=prior,
-            windows=windows,
-            weights=weights,
+    """Batch version of transition log-weight scoring with target tension and section style support."""
+    query_items = tuple(queries)
+    resolved_weights = PriorWeights() if weights is None else weights
+    data_scores = prior_logps(prior, query_items)
+
+    if windows is None:
+        window_items: tuple[TransitionWindow | None, ...] = (None,) * len(query_items)
+    else:
+        window_items = tuple(windows)
+        if len(window_items) != len(query_items):
+            raise ValueError("windows must align 1:1 with queries.")
+
+    from aimusic.core.vocab import DEFAULT_VOCABULARIES
+    from aimusic.scoring.tension import section_style_energy, transition_target_tension_energy
+
+    resolved_vocabs = DEFAULT_VOCABULARIES if vocabularies is None else vocabularies
+    resolved_edo = len(resolved_vocabs.keys) if edo is None else edo
+
+    results = []
+    for idx, query in enumerate(query_items):
+        gttm_energy = calculate_gttm_energy(
+            query.prev_state,
+            query.next_state,
+            query.time_index,
+            window=window_items[idx],
             meters=meters,
             vocabularies=vocabularies,
             edo=edo,
+            weights=resolved_weights,
         )
-    )
+        score = (resolved_weights.lambda_data * data_scores[idx]) - (
+            resolved_weights.lambda_gttm * gttm_energy
+        )
+
+        target_t = (
+            target_tensions[idx]
+            if target_tensions is not None and idx < len(target_tensions)
+            else (query.context.target_tension if query.context is not None else None)
+        )
+        if resolved_weights.lambda_target_tension > 0.0 and target_t is not None:
+            tension_energy = transition_target_tension_energy(
+                query.prev_state,
+                query.next_state,
+                query.time_index,
+                target_t,
+                resolved_vocabs,
+                resolved_edo,
+            )
+            score -= resolved_weights.lambda_target_tension * tension_energy
+
+        query_sec = (
+            sections[idx]
+            if sections is not None and idx < len(sections)
+            else (query.context.section if query.context is not None else None)
+        )
+        if resolved_weights.lambda_section_style > 0.0 and query_sec is not None:
+            sec_energy = section_style_energy(
+                query.prev_state,
+                query.next_state,
+                query_sec,  # type: ignore[arg-type]
+                resolved_vocabs,
+                resolved_edo,
+            )
+            score -= resolved_weights.lambda_section_style * sec_energy
+
+        results.append(score)
+    return tuple(float(value) for value in results)
 
 
 calculate_log_weight = calculate_transition_log_weight
+

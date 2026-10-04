@@ -24,9 +24,7 @@ from aimusic.core.rng import RNGKey
 from aimusic.core.vocab import DEFAULT_GROOVE_FAMILIES, DEFAULT_METER_SIGNATURES
 from aimusic.decode import decode_path_to_score
 from aimusic.planning.plans import MethodARunConfig, PlanningSection, run_method_a
-from aimusic.render import TrackInstrumentConfig, render_midi
 from aimusic.scoring.priors import NullPrior, Prior
-from aimusic.render.package import write_render_package
 from aimusic.scoring.tension import (
     compare_tension_curves,
     realized_tension_curve,
@@ -71,6 +69,7 @@ def _build_structural_diagnostics(
     vocabularies: Any,
     edo: int,
     sections: tuple[PlanningSection, ...] = (),
+    transition_diagnostics: tuple[Any, ...] = (),
 ) -> StructuralDiagnostics:
     decoded_states = path[:-1] if len(path) > 1 else path
     key_labels = [vocabularies.keys.token_for_id(state.key_id).label for state in decoded_states]
@@ -96,6 +95,7 @@ def _build_structural_diagnostics(
         tension_curve=tension_curve,
         target_tension_curve=tension_target_curve,
         tension_deviation=dataclasses.asdict(deviation) if deviation is not None else {},
+        transition_diagnostics=_json_ready(transition_diagnostics),
     )
 
 
@@ -123,8 +123,26 @@ def _parse_track_program(value: str) -> tuple[str, int]:
     return track_name.strip(), program
 
 
-def _build_track_instruments(args: argparse.Namespace) -> dict[str, TrackInstrumentConfig]:
-    instruments: dict[str, TrackInstrumentConfig] = {}
+def _load_render_module():
+    try:
+        from aimusic.render import TrackInstrumentConfig, render_midi
+        from aimusic.render.package import write_render_package
+        return TrackInstrumentConfig, render_midi, write_render_package
+    except ImportError as exc:
+        print(
+            "Error: MIDI rendering requires the 'mido' package.\n"
+            "Please install it by running:\n"
+            "    pip install mido\n"
+            "or:\n"
+            "    pip install -e \".[dev]\"",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+def _build_track_instruments(args: argparse.Namespace) -> dict[str, Any]:
+    TrackInstrumentConfig, _, _ = _load_render_module()
+    instruments: dict[str, Any] = {}
     for track_name, program in args.track_program:
         instruments[track_name.strip().lower()] = TrackInstrumentConfig(program=program)
     for track_name in args.drum_track:
@@ -139,6 +157,7 @@ def _build_track_instruments(args: argparse.Namespace) -> dict[str, TrackInstrum
 
 def handle_generate(args: argparse.Namespace) -> None:
     """Run the current Method A pipeline and export score, MIDI, and manifest artifacts."""
+    TrackInstrumentConfig, render_midi, write_render_package = _load_render_module()
     style_config = StyleConfig(
         allowed_meters=(args.meter,),
         groove_families=(args.groove_family,),
@@ -159,6 +178,8 @@ def handle_generate(args: argparse.Namespace) -> None:
         prior_weights=PriorWeights(
             lambda_data=getattr(args, "lambda_data", PriorWeights().lambda_data),
             lambda_gttm=getattr(args, "lambda_gttm", PriorWeights().lambda_gttm),
+            lambda_target_tension=getattr(args, "lambda_target_tension", PriorWeights().lambda_target_tension),
+            lambda_section_style=getattr(args, "lambda_section_style", PriorWeights().lambda_section_style),
         ),
         edo=args.edo,
     )
@@ -185,12 +206,14 @@ def handle_generate(args: argparse.Namespace) -> None:
         edo=args.edo,
         tempo_bpm=args.tempo_bpm,
         key=next_key,
+        sections=plan_result.endpoints.sections,
     )
     structural_stats = _build_structural_diagnostics(
         plan_result.path,
         plan_result.vocabularies,
         edo=args.edo,
         sections=plan_result.endpoints.sections,
+        transition_diagnostics=plan_result.diagnostics.transition_diagnostics,
     )
     manifest = RunManifest(
         seed=args.seed,
@@ -384,6 +407,7 @@ def handle_inspect(args: argparse.Namespace) -> None:
 
 def handle_export(args: argparse.Namespace) -> None:
     """Handle the export command by rendering a serialized Score to MIDI."""
+    _, render_midi, _ = _load_render_module()
     score_path = Path(args.file)
     data = _load_json_file(score_path, kind="score file")
 
@@ -466,6 +490,8 @@ def main() -> None:
         default=[],
         help="Treat the named symbolic track as percussion; repeatable.",
     )
+    gen_parser.add_argument("--lambda-target-tension", type=float, default=1.0, help="Weight for section target tension tracking.")
+    gen_parser.add_argument("--lambda-section-style", type=float, default=1.0, help="Weight for section style preference matching.")
     gen_parser.add_argument("--out", type=str, default="./outputs")
     gen_parser.add_argument(
         "--prior-bundle",

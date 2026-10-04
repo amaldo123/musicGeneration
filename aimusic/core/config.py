@@ -190,6 +190,8 @@ class PriorWeights:
 
     lambda_data: float = 1.0
     lambda_gttm: float = 1.0
+    lambda_target_tension: float = 1.0
+    lambda_section_style: float = 1.0
     meter: float = 1.0
     grouping: float = 1.0
     harmonic: float = 1.0
@@ -201,6 +203,8 @@ class PriorWeights:
         for name in (
             "lambda_data",
             "lambda_gttm",
+            "lambda_target_tension",
+            "lambda_section_style",
             "meter",
             "grouping",
             "harmonic",

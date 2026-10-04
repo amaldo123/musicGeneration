@@ -280,6 +280,21 @@ def _should_emit(
     return activation_unit < min(1.0, activation)
 
 
+def _effective_density(
+    base_density: float,
+    beat_index: int,
+    sections: Optional[Sequence[object]] = None,
+) -> float:
+    if not sections:
+        return base_density
+    from aimusic.planning.plans import PlanningSection, get_section_at_time
+
+    sec = get_section_at_time(sections, beat_index)  # type: ignore[arg-type]
+    if sec is None or not isinstance(sec, PlanningSection) or sec.target_density is None:
+        return base_density
+    return max(0.0, min(1.0, base_density * (sec.target_density / 0.5)))
+
+
 def build_subbeat_grid(
     path: Sequence[BeatState],
     *,
@@ -514,6 +529,7 @@ def generate_bass_events(
     edo: int = 12,
     ticks_per_beat: int = DEFAULT_TICKS_PER_BEAT,
     include_terminal_state: bool = False,
+    sections: Optional[Sequence[object]] = None,
 ) -> tuple[Tuple[NoteEvent, ...], RNGKey]:
     """Whole-path bass track, composed from `gen_bass` via `_run_track`."""
     if not isinstance(key, RNGKey):
@@ -611,6 +627,7 @@ def generate_comping_events(
     edo: int = 12,
     ticks_per_beat: int = DEFAULT_TICKS_PER_BEAT,
     include_terminal_state: bool = False,
+    sections: Optional[Sequence[object]] = None,
 ) -> tuple[Tuple[NoteEvent, ...], RNGKey]:
     """Whole-path comping track, composed from `gen_comping` via `_run_track`."""
     if not isinstance(key, RNGKey):
@@ -690,6 +707,7 @@ def generate_lead_events(
     edo: int = 12,
     ticks_per_beat: int = DEFAULT_TICKS_PER_BEAT,
     include_terminal_state: bool = False,
+    sections: Optional[Sequence[object]] = None,
 ) -> tuple[Tuple[NoteEvent, ...], RNGKey]:
     """Whole-path lead track, composed from `gen_lead` via `_run_track`."""
     if not isinstance(key, RNGKey):
@@ -767,6 +785,7 @@ def generate_drum_events(
     vocabularies: Vocabularies,
     ticks_per_beat: int = DEFAULT_TICKS_PER_BEAT,
     include_terminal_state: bool = False,
+    sections: Optional[Sequence[object]] = None,
 ) -> tuple[Tuple[NoteEvent, ...], RNGKey]:
     """Whole-path drum track, composed from `gen_drums` via `_run_track`."""
     if not isinstance(key, RNGKey):
@@ -798,6 +817,7 @@ def decode_path_to_score(
     ticks_per_beat: int = DEFAULT_TICKS_PER_BEAT,
     tempo_bpm: float = 120.0,
     include_terminal_state: bool = False,
+    sections: Optional[Sequence[object]] = None,
 ) -> tuple[Score, RNGKey]:
     """Decode a BeatState path into a multi-track symbolic score."""
     if not isinstance(key, RNGKey):
@@ -809,40 +829,44 @@ def decode_path_to_score(
         key, ("decoder.comping", "decoder.bass", "decoder.lead", "decoder.drums")
     )
     comping, _ = generate_comping_events(
-                states,
-                key=track_keys["decoder.comping"],
-                decode_config=resolved_decode,
-                vocabularies=vocabularies,
-                edo=edo,
-                ticks_per_beat=ticks_per_beat,
-                include_terminal_state=True,
-            )
+        states,
+        key=track_keys["decoder.comping"],
+        decode_config=resolved_decode,
+        vocabularies=vocabularies,
+        edo=edo,
+        ticks_per_beat=ticks_per_beat,
+        include_terminal_state=True,
+        sections=sections,
+    )
     bass, _ = generate_bass_events(
-                states,
-                key=track_keys["decoder.bass"],
-                decode_config=resolved_decode,
-                vocabularies=vocabularies,
-                edo=edo,
-                ticks_per_beat=ticks_per_beat,
-                include_terminal_state=True,
-            )
+        states,
+        key=track_keys["decoder.bass"],
+        decode_config=resolved_decode,
+        vocabularies=vocabularies,
+        edo=edo,
+        ticks_per_beat=ticks_per_beat,
+        include_terminal_state=True,
+        sections=sections,
+    )
     lead, _ = generate_lead_events(
-                states,
-                key=track_keys["decoder.lead"],
-                decode_config=resolved_decode,
-                vocabularies=vocabularies,
-                edo=edo,
-                ticks_per_beat=ticks_per_beat,
-                include_terminal_state=True,
-            )
+        states,
+        key=track_keys["decoder.lead"],
+        decode_config=resolved_decode,
+        vocabularies=vocabularies,
+        edo=edo,
+        ticks_per_beat=ticks_per_beat,
+        include_terminal_state=True,
+        sections=sections,
+    )
     drums, _ = generate_drum_events(
-                states,
-                key=track_keys["decoder.drums"],
-                decode_config=resolved_decode,
-                vocabularies=vocabularies,
-                ticks_per_beat=ticks_per_beat,
-                include_terminal_state=True,
-            )
+        states,
+        key=track_keys["decoder.drums"],
+        decode_config=resolved_decode,
+        vocabularies=vocabularies,
+        ticks_per_beat=ticks_per_beat,
+        include_terminal_state=True,
+        sections=sections,
+    )
     events = list(comping) + list(bass) + list(lead) + list(drums)
     _logger.info(f"Decoded {len(events)} note events ({len(states)} beats)")
     return Score(
@@ -850,3 +874,4 @@ def decode_path_to_score(
         ticks_per_beat=ticks_per_beat,
         tempo_bpm=tempo_bpm,
     ), next_key
+
