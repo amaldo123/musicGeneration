@@ -19,6 +19,7 @@ from aimusic.planning.graph import _rescore_retained_edges_with_windows, build_s
 from aimusic.planning.plans import (
     MethodARunConfig,
     PlanningSection,
+    SectionTimeline,
     run_method_a,
 )
 from aimusic.scoring.priors import NullPrior
@@ -35,7 +36,6 @@ class TestReq04Defects(unittest.TestCase):
         self.vocabs = DEFAULT_VOCABULARIES
         self.addCleanup(self.logger.finish)
 
-    @unittest.expectedFailure
     def test_F1_rescored_weights_depend_on_tension_weight(self) -> None:
         """F1: Rescoring retained graph edges must incorporate tension weights into edge log_weights."""
         # Run a baseline fixture to get a realistic planning graph with retained edges
@@ -46,6 +46,7 @@ class TestReq04Defects(unittest.TestCase):
         )
         graph = run_res.graph
         end_layer = graph.layers[-1]
+        timeline = SectionTimeline(RISE_16.sections, RISE_16.total_beats)
 
         # Rescore the exact same retained edge support with tension weight 20.0 vs 0.0
         w_20 = PriorWeights(lambda_target_tension=20.0, lambda_section_style=0.0)
@@ -58,6 +59,7 @@ class TestReq04Defects(unittest.TestCase):
             weights=w_20,
             vocabularies=self.vocabs,
             edo=12,
+            timeline=timeline,
         )
         rescored_0, _ = _rescore_retained_edges_with_windows(
             graph.edges_by_time,
@@ -66,6 +68,7 @@ class TestReq04Defects(unittest.TestCase):
             weights=w_0,
             vocabularies=self.vocabs,
             edo=12,
+            timeline=timeline,
         )
 
         weights_20 = [edge.log_weight for layer in rescored_20 for edge in layer]

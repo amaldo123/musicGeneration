@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Mapping, Optional, Sequence, Tuple
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Mapping, Optional, Sequence, Tuple, Union
 if TYPE_CHECKING:
-    from aimusic.planning.plans import PlanningSection
+    from aimusic.planning.sections import EdgeSectionView, PlanningSection, SectionTimeline
 
 _logger = logging.getLogger(__name__)
 
@@ -25,6 +25,7 @@ from aimusic.scoring.priors import (
     TransitionScoreBreakdown,
     calculate_transition_log_weights,
     calculate_transition_score_breakdowns,
+    with_section_terms,
 )
 from aimusic.scoring.gttm_features import FEATURE_REGISTRY, TransitionWindow
 from aimusic.theory.tonal import basic_space_distance, tonal_distance
@@ -248,6 +249,14 @@ class EdgeScoreDiagnostics:
     final_log_weight: float
     right_contexts: Tuple[BeatState, ...] = ()
     context_strategy: str = "two_pass_successor_mean"
+    target_tension: Optional[float] = None
+    realized_tension: Optional[float] = None
+    tension_deviation: float = 0.0
+    target_tension_energy: float = 0.0
+    target_tension_contribution: float = 0.0
+    section_style_components: Mapping[str, float] = field(default_factory=dict)
+    section_style_energy: float = 0.0
+    section_style_contribution: float = 0.0
 
     @property
     def right_context_count(self) -> int:
@@ -269,6 +278,14 @@ class EdgeScoreDiagnostics:
             "right_context_count": self.right_context_count,
             "right_contexts": [state.to_dict(vocabularies) for state in self.right_contexts],
             "context_strategy": self.context_strategy,
+            "target_tension": self.target_tension,
+            "realized_tension": self.realized_tension,
+            "tension_deviation": self.tension_deviation,
+            "target_tension_energy": self.target_tension_energy,
+            "target_tension_contribution": self.target_tension_contribution,
+            "section_style_components": dict(self.section_style_components),
+            "section_style_energy": self.section_style_energy,
+            "section_style_contribution": self.section_style_contribution,
         }
 
 
@@ -348,15 +365,21 @@ def _build_prior_context(
     time_index: int,
     section=None,
     target_tension: Optional[float] = None,
+    section_view: Optional[EdgeSectionView] = None,
 ) -> PriorContext:
     future_hints = end_layer.states[: min(3, len(end_layer.states))]
-    section_name = section.name if section is not None else None
+    section_name = None
+    if section_view is not None:
+        section_name = section_view.section.name
+    elif section is not None:
+        section_name = getattr(section, "name", None)
     return PriorContext(
         history=(source_state,),
         future_hints=future_hints,
         section_name=section_name,
         target_tension=target_tension,
         section=section,
+        section_view=section_view,
         metadata=(("graph_time", str(time_index)),),
     )
 
@@ -412,13 +435,27 @@ def _rescore_retained_edges_with_windows(
     weights: Optional[PriorWeights],
     vocabularies: Vocabularies,
     edo: int,
+    timeline: Optional[SectionTimeline] = None,
+    sections: Optional[Union[SectionTimeline, Sequence[PlanningSection]]] = None,
 ) -> tuple[Tuple[Tuple[Edge, ...], ...], Tuple[Tuple[EdgeScoreDiagnostics, ...], ...]]:
     """Second pass: score retained edges against their bounded retained successors.
 
     For an edge A->B, every retained B->C target supplies one right-context
     window. Their scores are averaged uniformly. Since B has at most d_max
     retained successors, this remains O(E * d_max) and does not alter support.
+
+    Per Decision D1 & D2: window-dependent terms (data + GTTM) are averaged over
+    windows. Then with_section_terms is called ONCE per edge with arrival state section_view.
     """
+    resolved_timeline = timeline
+    if resolved_timeline is None and sections is not None:
+        from aimusic.planning.sections import SectionTimeline
+        if isinstance(sections, SectionTimeline):
+            resolved_timeline = sections
+        else:
+            resolved_timeline = SectionTimeline(tuple(sections), total_beats=len(edge_layers))
+
+    resolved_weights = PriorWeights() if weights is None else weights
     provisional_layers = tuple(tuple(layer) for layer in edge_layers)
     rescored_layers: list[Tuple[Edge, ...]] = []
     diagnostic_layers: list[Tuple[EdgeScoreDiagnostics, ...]] = []
@@ -438,6 +475,7 @@ def _rescore_retained_edges_with_windows(
         flattened_windows: list[TransitionWindow | None] = []
         group_sizes: list[int] = []
         contexts_by_edge: list[Tuple[BeatState, ...]] = []
+        edge_views: list[Optional[EdgeSectionView]] = []
         for edge in edges:
             right_contexts = successor_targets.get(edge.target, ())
             contexts_by_edge.append(right_contexts)
@@ -450,11 +488,23 @@ def _rescore_retained_edges_with_windows(
             else:
                 windows = (None,)
             group_sizes.append(len(windows))
+
+            sec_view = (
+                resolved_timeline.edge_view(edge.time_index)
+                if resolved_timeline is not None
+                else None
+            )
+            edge_views.append(sec_view)
             query = PriorQuery(
                 prev_state=edge.source,
                 next_state=edge.target,
                 time_index=edge.time_index,
-                context=_build_prior_context(edge.source, end_layer, edge.time_index),
+                context=_build_prior_context(
+                    edge.source,
+                    end_layer,
+                    edge.time_index,
+                    section_view=sec_view,
+                ),
             )
             flattened_queries.extend(query for _ in windows)
             flattened_windows.extend(windows)
@@ -466,18 +516,67 @@ def _rescore_retained_edges_with_windows(
             weights=weights,
             vocabularies=vocabularies,
             edo=edo,
+            include_section_terms=False,
         )
         offset = 0
         rescored_pairs: list[tuple[Edge, EdgeScoreDiagnostics]] = []
-        for edge, group_size, right_contexts in zip(
-            edges, group_sizes, contexts_by_edge
+        for edge, group_size, right_contexts, sec_view in zip(
+            edges, group_sizes, contexts_by_edge, edge_views
         ):
             edge_breakdowns = batch_breakdowns[offset : offset + group_size]
             offset += group_size
-            diagnostic = _mean_score_breakdowns(
+            mean_diag = _mean_score_breakdowns(
                 edge_breakdowns,
                 edge=edge,
                 right_contexts=right_contexts,
+            )
+
+            # Decision D2: add tension and section style ONCE per edge after window average
+            mean_breakdown = TransitionScoreBreakdown(
+                raw_feature_contributions=mean_diag.raw_feature_contributions,
+                weighted_feature_contributions=mean_diag.weighted_feature_contributions,
+                data_logp=mean_diag.data_logp,
+                data_contribution=mean_diag.data_contribution,
+                gttm_score=mean_diag.gttm_score,
+                gttm_energy=mean_diag.gttm_energy,
+                gttm_contribution=mean_diag.gttm_contribution,
+                final_log_weight=mean_diag.final_log_weight,
+                prev_state=edge.source,
+                next_state=edge.target,
+            )
+            final_breakdown = with_section_terms(
+                mean_breakdown,
+                sec_view,
+                resolved_weights,
+                vocabularies,
+                edo,
+                prev_state=edge.source,
+                next_state=edge.target,
+            )
+            final_breakdown.check_decomposition()
+
+            diagnostic = EdgeScoreDiagnostics(
+                time_index=edge.time_index,
+                source=edge.source,
+                target=edge.target,
+                raw_feature_contributions=final_breakdown.raw_feature_contributions,
+                weighted_feature_contributions=final_breakdown.weighted_feature_contributions,
+                data_logp=final_breakdown.data_logp,
+                data_contribution=final_breakdown.data_contribution,
+                gttm_score=final_breakdown.gttm_score,
+                gttm_energy=final_breakdown.gttm_energy,
+                gttm_contribution=final_breakdown.gttm_contribution,
+                final_log_weight=final_breakdown.final_log_weight,
+                right_contexts=tuple(right_contexts),
+                context_strategy="two_pass_successor_mean",
+                target_tension=final_breakdown.target_tension,
+                realized_tension=final_breakdown.realized_tension,
+                tension_deviation=final_breakdown.tension_deviation,
+                target_tension_energy=final_breakdown.target_tension_energy,
+                target_tension_contribution=final_breakdown.target_tension_contribution,
+                section_style_components=dict(final_breakdown.section_style_components),
+                section_style_energy=final_breakdown.section_style_energy,
+                section_style_contribution=final_breakdown.section_style_contribution,
             )
             rescored_pairs.append(
                 (
@@ -485,7 +584,7 @@ def _rescore_retained_edges_with_windows(
                         time_index=edge.time_index,
                         source=edge.source,
                         target=edge.target,
-                        log_weight=diagnostic.final_log_weight,
+                        log_weight=final_breakdown.final_log_weight,
                     ),
                     diagnostic,
                 )
@@ -548,7 +647,8 @@ def build_sparse_graph(
     d_max: int,
     proposal_budget: Optional[int] = None,
     prior_guided_proposals: Optional[bool] = None,
-    sections: Optional[Sequence[PlanningSection]] = None,
+    sections: Optional[Union[SectionTimeline, Sequence[PlanningSection]]] = None,
+    timeline: Optional[SectionTimeline] = None,
 ) -> tuple[SparseGraph, RNGKey]:
     """Build a bounded sparse graph of BeatState transitions.
 
@@ -583,6 +683,14 @@ def build_sparse_graph(
         else prior_guided_proposals
     )
 
+    resolved_timeline = timeline
+    if resolved_timeline is None and sections is not None:
+        from aimusic.planning.sections import SectionTimeline
+        if isinstance(sections, SectionTimeline):
+            resolved_timeline = sections
+        else:
+            resolved_timeline = SectionTimeline(tuple(sections), total_beats=total_beats)
+
     expected_end_time = start_layer.time_index + total_beats
     if end_layer.time_index != expected_end_time:
         raise ValueError("end_layer.time_index must equal start_layer.time_index + total_beats.")
@@ -603,14 +711,11 @@ def build_sparse_graph(
         final_step = next_time == end_layer.time_index
         steps_remaining = end_layer.time_index - next_time
 
-        current_section = None
-        current_target_tension = None
-        if sections is not None:
-            from aimusic.planning.plans import get_section_at_time
-            from aimusic.scoring.tension import target_tension_at_time
-
-            current_section = get_section_at_time(sections, current_time)
-            current_target_tension = target_tension_at_time(sections, current_time)
+        edge_sec_view: Optional[EdgeSectionView] = (
+            resolved_timeline.edge_view(current_time) if resolved_timeline is not None else None
+        )
+        current_section = edge_sec_view.section if edge_sec_view is not None else None
+        current_target_tension = edge_sec_view.target_tension if edge_sec_view is not None else None
 
         raw_candidate_count = 0
         raw_edge_count = 0
@@ -621,6 +726,7 @@ def build_sparse_graph(
         legal_candidate_count = 0
         scored_candidate_count = 0
 
+        source_section = resolved_timeline.at_state(current_time) if resolved_timeline is not None else None
         for source_state in current_layer.states:
             if final_step:
                 candidate_result = _candidate_result_for_target_layer(
@@ -643,13 +749,14 @@ def build_sparse_graph(
                         current_time,
                         section=current_section,
                         target_tension=current_target_tension,
+                        section_view=edge_sec_view,
                     ),
                     edo=resolved_edo,
                     key=current_key,
                     d_max=d_max,
                     proposal_budget=resolved_proposal_budget,
                     prior_guided_proposals=resolved_prior_guided_proposals,
-                    section=current_section,
+                    section=source_section,
                     section_guided_proposals=(
                         weights is not None and weights.lambda_section_style > 0.0
                     ),
@@ -666,6 +773,7 @@ def build_sparse_graph(
                 current_time,
                 section=current_section,
                 target_tension=current_target_tension,
+                section_view=edge_sec_view,
             )
             queries = tuple(
                 PriorQuery(
@@ -806,6 +914,7 @@ def build_sparse_graph(
         weights=weights,
         vocabularies=resolved_vocabs,
         edo=resolved_edo,
+        timeline=resolved_timeline,
     )
     return SparseGraph(
         layers=tuple(layers),

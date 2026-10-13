@@ -13,9 +13,10 @@ from aimusic.core.config import (
     PriorWeights,
 )
 from aimusic.core.core_types import BeatState
+from aimusic.core.vocab import Vocabularies
+from aimusic.planning.sections import EdgeSectionView, PlanningSection
 from aimusic.scoring.gttm_features import (
     TransitionWindow,
-    calculate_gttm_energy,
     transition_feature_vector,
     weighted_feature_breakdown,
 )
@@ -246,55 +247,92 @@ class StructuralTokenSequence:
         }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class PriorContext:
     """Optional transition-scoring context for external priors."""
 
     history: Tuple[BeatState, ...] = ()
     future_hints: Tuple[BeatState, ...] = ()
     section_name: Optional[str] = None
-    target_tension: Optional[float] = None
+    section_view: Optional[EdgeSectionView] = None
     metadata: MetadataPairs = ()
     history_tokens: Optional[StructuralTokenSequence] = None
     future_hint_tokens: Optional[StructuralTokenSequence] = None
-    section: Optional[object] = None
 
-    def __post_init__(self) -> None:
-        history = _coerce_state_tuple("history", self.history)
-        future_hints = _coerce_state_tuple("future_hints", self.future_hints)
-        object.__setattr__(self, "history", history)
-        object.__setattr__(self, "future_hints", future_hints)
+    def __init__(
+        self,
+        history: Sequence[BeatState] = (),
+        future_hints: Sequence[BeatState] = (),
+        section_name: Optional[str] = None,
+        section_view: Optional[EdgeSectionView] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
+        history_tokens: Optional[StructuralTokenSequence] = None,
+        future_hint_tokens: Optional[StructuralTokenSequence] = None,
+        *,
+        section: Optional[object] = None,
+        target_tension: Optional[float] = None,
+    ) -> None:
+        history_coerced = _coerce_state_tuple("history", history)
+        future_hints_coerced = _coerce_state_tuple("future_hints", future_hints)
+        object.__setattr__(self, "history", history_coerced)
+        object.__setattr__(self, "future_hints", future_hints_coerced)
 
-        if self.section_name is not None:
-            _require_non_empty_str("section_name", self.section_name)
-        if self.target_tension is not None:
-            _require_real("target_tension", self.target_tension)
+        resolved_view = section_view
+        if resolved_view is None and (section is not None or target_tension is not None):
+            from aimusic.planning.sections import EdgeSectionView, PlanningSection
 
-        metadata = _coerce_metadata("metadata", self.metadata)
-        object.__setattr__(self, "metadata", metadata)
+            if isinstance(section, PlanningSection):
+                resolved_view = EdgeSectionView(
+                    section=section,
+                    section_index=0,
+                    offset_in_section=0,
+                    is_section_start=False,
+                    target_tension=float(target_tension) if target_tension is not None else 0.5,
+                    arrival_time=1,
+                )
 
-        history_tokens = (
-            StructuralTokenSequence.from_states(history)
-            if self.history_tokens is None
-            else self.history_tokens
+        resolved_sec_name = section_name
+        if resolved_sec_name is None and resolved_view is not None:
+            resolved_sec_name = resolved_view.section.name
+        if resolved_sec_name is not None:
+            _require_non_empty_str("section_name", resolved_sec_name)
+
+        object.__setattr__(self, "section_name", resolved_sec_name)
+        object.__setattr__(self, "section_view", resolved_view)
+
+        meta_coerced = _coerce_metadata("metadata", metadata)
+        object.__setattr__(self, "metadata", meta_coerced)
+
+        hist_tokens = (
+            StructuralTokenSequence.from_states(history_coerced)
+            if history_tokens is None
+            else history_tokens
         )
-        future_hint_tokens = (
-            StructuralTokenSequence.from_states(future_hints)
-            if self.future_hint_tokens is None
-            else self.future_hint_tokens
+        fut_tokens = (
+            StructuralTokenSequence.from_states(future_hints_coerced)
+            if future_hint_tokens is None
+            else future_hint_tokens
         )
 
-        if not isinstance(history_tokens, StructuralTokenSequence):
+        if not isinstance(hist_tokens, StructuralTokenSequence):
             raise TypeError("history_tokens must be a StructuralTokenSequence.")
-        if not isinstance(future_hint_tokens, StructuralTokenSequence):
+        if not isinstance(fut_tokens, StructuralTokenSequence):
             raise TypeError("future_hint_tokens must be a StructuralTokenSequence.")
-        if len(history_tokens) != len(history):
+        if len(hist_tokens) != len(history_coerced):
             raise ValueError("history_tokens length must match history length.")
-        if len(future_hint_tokens) != len(future_hints):
+        if len(fut_tokens) != len(future_hints_coerced):
             raise ValueError("future_hint_tokens length must match future_hints length.")
 
-        object.__setattr__(self, "history_tokens", history_tokens)
-        object.__setattr__(self, "future_hint_tokens", future_hint_tokens)
+        object.__setattr__(self, "history_tokens", hist_tokens)
+        object.__setattr__(self, "future_hint_tokens", fut_tokens)
+
+    @property
+    def section(self) -> Optional[PlanningSection]:
+        return self.section_view.section if self.section_view is not None else None
+
+    @property
+    def target_tension(self) -> Optional[float]:
+        return self.section_view.target_tension if self.section_view is not None else None
 
     def to_dict(self) -> dict[str, object]:
         assert self.history_tokens is not None
@@ -690,18 +728,48 @@ class TransitionScoreBreakdown:
     gttm_energy: float
     gttm_contribution: float
     final_log_weight: float
+    target_tension: Optional[float] = None
+    realized_tension: Optional[float] = None
+    tension_deviation: float = 0.0
+    target_tension_energy: float = 0.0
+    target_tension_contribution: float = 0.0
+    section_style_components: Mapping[str, float] = field(default_factory=dict)
+    section_style_energy: float = 0.0
+    section_style_contribution: float = 0.0
+    prev_state: Optional[BeatState] = None
+    next_state: Optional[BeatState] = None
+
+    def check_decomposition(self, tol: float = 1e-9) -> None:
+        """Check that final_log_weight equals data + gttm - tension_contribution - style_contribution within tol."""
+        expected = (
+            self.data_contribution
+            + self.gttm_contribution
+            - self.target_tension_contribution
+            - self.section_style_contribution
+        )
+        diff = abs(self.final_log_weight - expected)
+        if diff > tol:
+            raise ValueError(
+                f"TransitionScoreBreakdown decomposition violated: "
+                f"final_log_weight={self.final_log_weight} != "
+                f"data ({self.data_contribution}) + gttm ({self.gttm_contribution}) - "
+                f"target_tension ({self.target_tension_contribution}) - "
+                f"section_style ({self.section_style_contribution}). "
+                f"Expected {expected}, discrepancy {diff} > tol {tol}."
+            )
 
 
-def _transition_score_breakdown_from_data_logp(
+def score_transition_breakdown(
     query: PriorQuery,
-    data_logp: float,
-    *,
     window: Optional[TransitionWindow],
     weights: PriorWeights,
+    vocabularies: Vocabularies,
+    edo: int,
+    data_logp: float,
+    *,
     meters=None,
-    vocabularies=None,
-    edo: Optional[int] = None,
 ) -> TransitionScoreBreakdown:
+    """Compute base data and GTTM terms for one transition query and window."""
     raw = transition_feature_vector(
         query.prev_state,
         query.next_state,
@@ -735,6 +803,74 @@ def _transition_score_breakdown_from_data_logp(
         gttm_energy=gttm_energy,
         gttm_contribution=gttm_contribution,
         final_log_weight=final_log_weight,
+        prev_state=query.prev_state,
+        next_state=query.next_state,
+    )
+
+
+# Backward-compatible alias
+_transition_score_breakdown_from_data_logp = score_transition_breakdown
+
+
+def with_section_terms(
+    breakdown: TransitionScoreBreakdown,
+    section_view: Optional[EdgeSectionView],
+    weights: PriorWeights,
+    vocabularies: Vocabularies,
+    edo: int,
+    *,
+    prev_state: Optional[BeatState] = None,
+    next_state: Optional[BeatState] = None,
+) -> TransitionScoreBreakdown:
+    """Add target tension and section style terms for the arrival state once per edge."""
+    prev = prev_state if prev_state is not None else breakdown.prev_state
+    next_st = next_state if next_state is not None else breakdown.next_state
+
+    if section_view is None or next_st is None:
+        return breakdown
+
+    target_tension = section_view.target_tension
+    from aimusic.scoring.tension import (
+        beat_tension,
+        section_style_breakdown,
+        section_style_energy,
+    )
+
+    realized_tension = beat_tension(prev, next_st, vocabularies, edo)
+    tension_deviation = realized_tension - target_tension
+    target_tension_energy = float(tension_deviation ** 2)
+    target_tension_contribution = float(weights.lambda_target_tension * target_tension_energy)
+
+    style_energy = float(section_style_energy(prev, next_st, section_view.section, vocabularies, edo))
+    style_components = dict(section_style_breakdown(prev, next_st, section_view.section, vocabularies, edo))
+    section_style_contribution = float(weights.lambda_section_style * style_energy)
+
+    final_log_weight = float(
+        breakdown.data_contribution
+        + breakdown.gttm_contribution
+        - target_tension_contribution
+        - section_style_contribution
+    )
+
+    return TransitionScoreBreakdown(
+        raw_feature_contributions=breakdown.raw_feature_contributions,
+        weighted_feature_contributions=breakdown.weighted_feature_contributions,
+        data_logp=breakdown.data_logp,
+        data_contribution=breakdown.data_contribution,
+        gttm_score=breakdown.gttm_score,
+        gttm_energy=breakdown.gttm_energy,
+        gttm_contribution=breakdown.gttm_contribution,
+        final_log_weight=final_log_weight,
+        target_tension=target_tension,
+        realized_tension=realized_tension,
+        tension_deviation=tension_deviation,
+        target_tension_energy=target_tension_energy,
+        target_tension_contribution=target_tension_contribution,
+        section_style_components=style_components,
+        section_style_energy=style_energy,
+        section_style_contribution=section_style_contribution,
+        prev_state=prev,
+        next_state=next_st,
     )
 
 
@@ -753,16 +889,28 @@ def calculate_transition_score_breakdown(
 ) -> TransitionScoreBreakdown:
     """Scalar transition scoring with raw and weighted feature diagnostics."""
     resolved_weights = PriorWeights() if weights is None else weights
+    from aimusic.core.vocab import DEFAULT_VOCABULARIES
+    resolved_vocabs = DEFAULT_VOCABULARIES if vocabularies is None else vocabularies
+    resolved_edo = len(resolved_vocabs.keys) if edo is None else edo
+
     query = PriorQuery(prev_state, next_state, t, context)
     data_logp = float(prior.logp_next(prev_state, next_state, t, context))
-    return _transition_score_breakdown_from_data_logp(
+    base = score_transition_breakdown(
         query,
+        window,
+        resolved_weights,
+        resolved_vocabs,
+        resolved_edo,
         data_logp,
-        window=window,
-        weights=resolved_weights,
         meters=meters,
-        vocabularies=vocabularies,
-        edo=edo,
+    )
+    sec_view = context.section_view if context is not None else None
+    return with_section_terms(
+        base,
+        sec_view,
+        resolved_weights,
+        resolved_vocabs,
+        resolved_edo,
     )
 
 
@@ -775,10 +923,15 @@ def calculate_transition_score_breakdowns(
     meters=None,
     vocabularies=None,
     edo: Optional[int] = None,
+    include_section_terms: bool = True,
 ) -> Tuple[TransitionScoreBreakdown, ...]:
     """Batch transition scoring with windows aligned one-to-one with queries."""
     query_items = tuple(queries)
     resolved_weights = PriorWeights() if weights is None else weights
+    from aimusic.core.vocab import DEFAULT_VOCABULARIES
+    resolved_vocabs = DEFAULT_VOCABULARIES if vocabularies is None else vocabularies
+    resolved_edo = len(resolved_vocabs.keys) if edo is None else edo
+
     data_scores = prior_logps(prior, query_items)
     if len(data_scores) != len(query_items):
         raise ValueError("prior scoring must return one score per query.")
@@ -790,18 +943,31 @@ def calculate_transition_score_breakdowns(
         if len(window_items) != len(query_items):
             raise ValueError("windows must align 1:1 with queries.")
 
-    return tuple(
-        _transition_score_breakdown_from_data_logp(
+    results: list[TransitionScoreBreakdown] = []
+    for idx, query in enumerate(query_items):
+        base = score_transition_breakdown(
             query,
+            window_items[idx],
+            resolved_weights,
+            resolved_vocabs,
+            resolved_edo,
             data_scores[idx],
-            window=window_items[idx],
-            weights=resolved_weights,
             meters=meters,
-            vocabularies=vocabularies,
-            edo=edo,
         )
-        for idx, query in enumerate(query_items)
-    )
+        if include_section_terms:
+            sec_view = query.context.section_view if query.context is not None else None
+            results.append(
+                with_section_terms(
+                    base,
+                    sec_view,
+                    resolved_weights,
+                    resolved_vocabs,
+                    resolved_edo,
+                )
+            )
+        else:
+            results.append(base)
+    return tuple(results)
 
 
 def calculate_transition_log_weight(
@@ -818,60 +984,48 @@ def calculate_transition_log_weight(
     edo: Optional[int] = None,
     target_tension: Optional[float] = None,
     section: Optional[object] = None,
+    section_view: Optional[EdgeSectionView] = None,
 ) -> float:
     """Combine prior data likelihood, GTTM energy, target tension deviation, and section style energy into one edge weight."""
-    resolved_weights = PriorWeights() if weights is None else weights
-    data_logp = float(prior.logp_next(prev_state, next_state, t, context))
-    gttm_energy = calculate_gttm_energy(
+    effective_context = context
+    effective_view = section_view
+    if effective_view is None and context is not None:
+        effective_view = context.section_view
+
+    if effective_view is None and (target_tension is not None or section is not None):
+        from aimusic.planning.sections import EdgeSectionView, PlanningSection
+
+        sec_obj = section if isinstance(section, PlanningSection) else (
+            context.section if context is not None and isinstance(context.section, PlanningSection) else None
+        )
+        if sec_obj is not None:
+            tau = target_tension if target_tension is not None else (
+                context.target_tension if context is not None and context.target_tension is not None else 0.5
+            )
+            effective_view = EdgeSectionView(
+                section=sec_obj,
+                section_index=0,
+                offset_in_section=max(0, t + 1 - sec_obj.start_time),
+                is_section_start=(t + 1 == sec_obj.start_time),
+                target_tension=tau,
+                arrival_time=t + 1,
+            )
+            history = context.history if context is not None else (prev_state,)
+            effective_context = PriorContext(history=history, section_view=effective_view)
+
+    breakdown = calculate_transition_score_breakdown(
         prev_state,
         next_state,
         t,
+        prior=prior,
+        context=effective_context,
         window=window,
-        weights=resolved_weights,
+        weights=weights,
         meters=meters,
         vocabularies=vocabularies,
         edo=edo,
     )
-    score = (resolved_weights.lambda_data * data_logp) - (resolved_weights.lambda_gttm * gttm_energy)
-
-    effective_target_tension = (
-        target_tension if target_tension is not None
-        else (context.target_tension if context is not None else None)
-    )
-    from aimusic.core.vocab import DEFAULT_VOCABULARIES
-    resolved_vocabs = DEFAULT_VOCABULARIES if vocabularies is None else vocabularies
-    resolved_edo = len(resolved_vocabs.keys) if edo is None else edo
-
-    if resolved_weights.lambda_target_tension > 0.0 and effective_target_tension is not None:
-        from aimusic.scoring.tension import transition_target_tension_energy
-
-        tension_energy = transition_target_tension_energy(
-            prev_state,
-            next_state,
-            t,
-            effective_target_tension,
-            resolved_vocabs,
-            resolved_edo,
-        )
-        score -= resolved_weights.lambda_target_tension * tension_energy
-
-    effective_section = (
-        section if section is not None
-        else (context.section if context is not None else None)
-    )
-    if resolved_weights.lambda_section_style > 0.0 and effective_section is not None:
-        from aimusic.scoring.tension import section_style_energy
-
-        sec_energy = section_style_energy(
-            prev_state,
-            next_state,
-            effective_section,  # type: ignore[arg-type]
-            resolved_vocabs,
-            resolved_edo,
-        )
-        score -= resolved_weights.lambda_section_style * sec_energy
-
-    return score
+    return breakdown.final_log_weight
 
 
 def calculate_transition_log_weights(
@@ -887,72 +1041,44 @@ def calculate_transition_log_weights(
     sections: Optional[Sequence[Optional[object]]] = None,
 ) -> Tuple[float, ...]:
     """Batch version of transition log-weight scoring with target tension and section style support."""
-    query_items = tuple(queries)
-    resolved_weights = PriorWeights() if weights is None else weights
-    data_scores = prior_logps(prior, query_items)
+    effective_queries = list(queries)
+    if target_tensions is not None or sections is not None:
+        from aimusic.planning.sections import EdgeSectionView, PlanningSection
 
-    if windows is None:
-        window_items: tuple[TransitionWindow | None, ...] = (None,) * len(query_items)
-    else:
-        window_items = tuple(windows)
-        if len(window_items) != len(query_items):
-            raise ValueError("windows must align 1:1 with queries.")
+        for idx, q in enumerate(queries):
+            cur_view = q.context.section_view if q.context is not None else None
+            if cur_view is None:
+                sec_obj = (
+                    sections[idx] if sections is not None and idx < len(sections) and isinstance(sections[idx], PlanningSection)
+                    else (q.context.section if q.context is not None and isinstance(q.context.section, PlanningSection) else None)
+                )
+                if sec_obj is not None:
+                    tau = (
+                        target_tensions[idx] if target_tensions is not None and idx < len(target_tensions) and target_tensions[idx] is not None
+                        else (q.context.target_tension if q.context is not None and q.context.target_tension is not None else 0.5)
+                    )
+                    new_view = EdgeSectionView(
+                        section=sec_obj,
+                        section_index=0,
+                        offset_in_section=max(0, q.time_index + 1 - sec_obj.start_time),
+                        is_section_start=(q.time_index + 1 == sec_obj.start_time),
+                        target_tension=tau,
+                        arrival_time=q.time_index + 1,
+                    )
+                    hist = q.context.history if q.context is not None else (q.prev_state,)
+                    new_ctx = PriorContext(history=hist, section_view=new_view)
+                    effective_queries[idx] = PriorQuery(q.prev_state, q.next_state, q.time_index, new_ctx)
 
-    from aimusic.core.vocab import DEFAULT_VOCABULARIES
-    from aimusic.scoring.tension import section_style_energy, transition_target_tension_energy
-
-    resolved_vocabs = DEFAULT_VOCABULARIES if vocabularies is None else vocabularies
-    resolved_edo = len(resolved_vocabs.keys) if edo is None else edo
-
-    results = []
-    for idx, query in enumerate(query_items):
-        gttm_energy = calculate_gttm_energy(
-            query.prev_state,
-            query.next_state,
-            query.time_index,
-            window=window_items[idx],
-            meters=meters,
-            vocabularies=vocabularies,
-            edo=edo,
-            weights=resolved_weights,
-        )
-        score = (resolved_weights.lambda_data * data_scores[idx]) - (
-            resolved_weights.lambda_gttm * gttm_energy
-        )
-
-        target_t = (
-            target_tensions[idx]
-            if target_tensions is not None and idx < len(target_tensions)
-            else (query.context.target_tension if query.context is not None else None)
-        )
-        if resolved_weights.lambda_target_tension > 0.0 and target_t is not None:
-            tension_energy = transition_target_tension_energy(
-                query.prev_state,
-                query.next_state,
-                query.time_index,
-                target_t,
-                resolved_vocabs,
-                resolved_edo,
-            )
-            score -= resolved_weights.lambda_target_tension * tension_energy
-
-        query_sec = (
-            sections[idx]
-            if sections is not None and idx < len(sections)
-            else (query.context.section if query.context is not None else None)
-        )
-        if resolved_weights.lambda_section_style > 0.0 and query_sec is not None:
-            sec_energy = section_style_energy(
-                query.prev_state,
-                query.next_state,
-                query_sec,  # type: ignore[arg-type]
-                resolved_vocabs,
-                resolved_edo,
-            )
-            score -= resolved_weights.lambda_section_style * sec_energy
-
-        results.append(score)
-    return tuple(float(value) for value in results)
+    breakdowns = calculate_transition_score_breakdowns(
+        effective_queries,
+        prior=prior,
+        windows=windows,
+        weights=weights,
+        meters=meters,
+        vocabularies=vocabularies,
+        edo=edo,
+    )
+    return tuple(b.final_log_weight for b in breakdowns)
 
 
 calculate_log_weight = calculate_transition_log_weight

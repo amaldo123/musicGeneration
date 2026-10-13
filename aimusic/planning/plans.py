@@ -730,6 +730,7 @@ def run_method_a(
         endpoints.end_choice.state,
         time_index=run_config.total_beats,
     )
+    timeline = SectionTimeline(sections=endpoints.sections, total_beats=run_config.total_beats)
     graph, _ = build_sparse_graph(
         start_layer=start_endpoint.layer,
         end_layer=end_endpoint.layer,
@@ -743,6 +744,7 @@ def run_method_a(
         key=streams["candidate_proposal"],
         d_max=resolved_sb.d_max,
         sections=endpoints.sections,
+        timeline=timeline,
     )
     _logger.info(f"Graph built: {len(graph.layers)} layers, {sum(len(l.states) for l in graph.layers)} states")
     aligned_endpoints = MethodAEndpoints(
