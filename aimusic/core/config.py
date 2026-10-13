@@ -190,8 +190,9 @@ class PriorWeights:
 
     lambda_data: float = 1.0
     lambda_gttm: float = 1.0
-    lambda_target_tension: float = 1.0
-    lambda_section_style: float = 1.0
+    lambda_target_tension: float = 0.0
+    lambda_section_style: float = 0.0
+    sigma_tension: float = 0.1
     meter: float = 1.0
     grouping: float = 1.0
     harmonic: float = 1.0
@@ -205,6 +206,7 @@ class PriorWeights:
             "lambda_gttm",
             "lambda_target_tension",
             "lambda_section_style",
+            "sigma_tension",
             "meter",
             "grouping",
             "harmonic",
@@ -213,6 +215,8 @@ class PriorWeights:
             "groove",
         ):
             _require_real(name, getattr(self, name), minimum=0.0)
+        if self.sigma_tension <= 0.0:
+            raise ValueError("sigma_tension must be > 0.")
         if self.lambda_data == 0.0 and self.lambda_gttm == 0.0:
             raise ValueError("At least one of lambda_data or lambda_gttm must be > 0.")
 

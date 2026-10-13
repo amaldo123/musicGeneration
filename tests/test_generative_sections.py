@@ -1,15 +1,12 @@
 import unittest
 from aimusic.core.config import (
-    DecodeConfig,
     PriorWeights,
     SBConfig,
-    StyleConfig,
 )
-from aimusic.core.core_types import BeatState, Layer
+from aimusic.core.core_types import BeatState
 from aimusic.core.rng import RNGKey
 from aimusic.core.vocab import DEFAULT_VOCABULARIES
 from aimusic.planning.candidates import get_valid_next_states
-from aimusic.planning.graph import build_sparse_graph
 from aimusic.planning.plans import (
     MethodARunConfig,
     PlanningSection,
@@ -17,21 +14,11 @@ from aimusic.planning.plans import (
     get_section_at_time,
     run_method_a,
 )
-from aimusic.scoring.priors import (
-    NullPrior,
-    PriorContext,
-    PriorQuery,
-    calculate_transition_log_weight,
-    calculate_transition_log_weights,
-)
 from aimusic.scoring.tension import (
-    beat_tension,
     compare_tension_curves,
     realized_tension_curve,
-    section_style_energy,
     target_tension_at_time,
     target_tension_curve,
-    transition_target_tension_energy,
 )
 
 
@@ -71,7 +58,7 @@ class TestGenerativeSections(unittest.TestCase):
         self.assertAlmostEqual(t0_val, 0.2, places=4)
 
         t2_val = target_tension_at_time(sections, 2)
-        self.assertAlmostEqual(t2_val, 0.5, places=4)
+        self.assertAlmostEqual(t2_val, 0.6, places=4)
 
     def test_custom_section_plan_supplied_to_method_a(self) -> None:
         """Custom section plan supplied to MethodARunConfig reaches Method A and endpoints."""
@@ -156,12 +143,12 @@ class TestGenerativeSections(unittest.TestCase):
     def test_target_arc_only_change_alters_path(self) -> None:
         """Changing target_tension_arc while holding seed identical alters path and tension profile."""
         sec_low = (
-            PlanningSection(name="Low", start_time=0, end_time=8, boundary_level=3, target_tension_arc=(0.1, 0.2)),
+            PlanningSection(name="Low", start_time=0, end_time=8, boundary_level=3, target_tension_arc=(0.1, 0.3)),
         )
         sec_high = (
-            PlanningSection(name="High", start_time=0, end_time=8, boundary_level=3, target_tension_arc=(0.85, 0.95)),
+            PlanningSection(name="High", start_time=0, end_time=8, boundary_level=3, target_tension_arc=(0.4, 0.6)),
         )
-        w_tension = PriorWeights(lambda_target_tension=3.0, lambda_section_style=0.0)
+        w_tension = PriorWeights(lambda_target_tension=2.0, lambda_section_style=0.0)
 
         cfg_low = MethodARunConfig(
             total_beats=8, seed=42, sections=sec_low, prior_weights=w_tension,

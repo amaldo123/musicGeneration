@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import statistics
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from aimusic.core.core_types import BeatState
 from aimusic.core.vocab import Vocabularies
@@ -17,6 +17,7 @@ from aimusic.theory.tonal import basic_space_distance, tonal_distance
 
 if TYPE_CHECKING:  # pragma: no cover - import-time cycle avoidance only
     from aimusic.planning.plans import PlanningSection
+    from aimusic.planning.sections import SectionTimeline
 
 TENSION_MODEL_VERSION = "1.0.0"
 
@@ -184,64 +185,79 @@ def realized_tension_curve(
     return curve
 
 
-def target_tension_curve(sections: Sequence["PlanningSection"]) -> List[Tuple[float, float]]:
-    """Time-indexed target tension curve sampled from section arcs.
+def target_tension_curve(
+    sections: Union["SectionTimeline", Sequence["PlanningSection"]],
+) -> List[Tuple[float, float]]:
+    """Time-indexed target tension curve sampled from SectionTimeline.
 
-    Each section's `target_tension_arc` (>= 2 control points, evenly spaced
-    across [start_time, end_time)) is linearly interpolated to produce one
-    sample per beat, so the result lines up point-for-point with
-    `realized_tension_curve`'s time indexing.
+    Delegates to SectionTimeline to eliminate duplicated interpolation logic.
+    The curve index k is the ARRIVAL beat (same as realized_tension_curve),
+    covering beats 0..total_beats so edge arrival states k = t + 1 align point-for-point.
     """
-    curve: List[Tuple[float, float]] = []
-    for section in sections:
-        arc = section.target_tension_arc
-        span = section.end_time - section.start_time
-        n_segments = len(arc) - 1
-        for offset in range(span):
-            # Position within the section, in [0, 1).
-            frac = offset / span if span > 0 else 0.0
-            # Which arc segment this position falls into.
-            seg_pos = frac * n_segments
-            seg_index = min(int(seg_pos), n_segments - 1)
-            seg_frac = seg_pos - seg_index
-            start_val = arc[seg_index]
-            end_val = arc[seg_index + 1]
-            val = start_val + (end_val - start_val) * seg_frac
-            curve.append((float(section.start_time + offset), float(val)))
-    return curve
+    from aimusic.planning.sections import SectionTimeline
+
+    if isinstance(sections, SectionTimeline):
+        timeline = sections
+    else:
+        timeline = SectionTimeline(tuple(sections), total_beats=sections[-1].end_time)
+    return [(float(k), float(v)) for k, v in timeline.as_curve()]
 
 
-def target_tension_at_time(sections: Sequence["PlanningSection"], t: int) -> float:
-    """Return interpolated target tension value for beat t across sections."""
-    for section in sections:
-        if section.start_time <= t < section.end_time:
-            arc = section.target_tension_arc
-            span = section.end_time - section.start_time
-            if span <= 0:
-                return arc[0]
-            offset = t - section.start_time
-            n_segments = len(arc) - 1
-            frac = offset / span
-            seg_pos = frac * n_segments
-            seg_index = min(int(seg_pos), n_segments - 1)
-            seg_frac = seg_pos - seg_index
-            return float(arc[seg_index] + (arc[seg_index + 1] - arc[seg_index]) * seg_frac)
-    return 0.5
+def target_tension_at_time(
+    sections: Union["SectionTimeline", Sequence["PlanningSection"]],
+    t: int,
+) -> float:
+    """Return interpolated target tension value for beat state index t across sections.
+
+    Delegates to SectionTimeline to eliminate duplicated interpolation logic.
+    Index t is the beat state index (arrival beat convention k = t + 1).
+    """
+    from aimusic.planning.sections import SectionTimeline
+
+    if isinstance(sections, SectionTimeline):
+        timeline = sections
+    else:
+        timeline = SectionTimeline(tuple(sections), total_beats=sections[-1].end_time)
+    return float(timeline.target_tension(t))
 
 
 def transition_target_tension_energy(
-    prev_state: Optional[BeatState],
-    state: BeatState,
-    t: int,
-    target_tension: float,
-    vocabularies: Vocabularies,
-    edo: int,
-    weights: TensionWeights = DEFAULT_WEIGHTS,
+    tau_hat: float | Optional[BeatState],
+    tau_star: float | BeatState,
+    sigma: float | int = 0.1,
+    *args: Any,
+    **kwargs: Any,
 ) -> float:
-    """Compute squared deviation between realized tension and target tension."""
-    realized = beat_tension(prev_state, state, vocabularies, edo, weights)
+    """Compute target tension deviation energy: (tau_hat - tau_star)^2 / (2 * sigma^2).
+
+    sigma is the tolerance in tension units: a deviation of sigma costs exactly
+    0.5 nat before lambda scaling (Decision D2).
+    """
+    if (
+        isinstance(tau_hat, (int, float))
+        and not isinstance(tau_hat, bool)
+        and isinstance(tau_star, (int, float))
+        and not isinstance(tau_star, bool)
+    ):
+        if not isinstance(sigma, (int, float)) or isinstance(sigma, bool):
+            raise TypeError("sigma must be a real number.")
+        sig = float(sigma)
+        if sig <= 0.0:
+            raise ValueError("sigma must be > 0.")
+        diff = float(tau_hat - tau_star)
+        return float((diff * diff) / (2.0 * sig * sig))
+
+    # Backward compatibility fallback if called with legacy positional signature:
+    # (prev_state, state, t, target_tension, vocabularies, edo, ...)
+    prev_state = tau_hat  # type: ignore[assignment]
+    state = tau_star  # type: ignore[assignment]
+    target_tension = args[0] if len(args) > 0 else kwargs.get("target_tension", 0.5)
+    vocabs = args[1] if len(args) > 1 else kwargs.get("vocabularies")
+    edo = args[2] if len(args) > 2 else kwargs.get("edo", 12)
+    weights = args[3] if len(args) > 3 else kwargs.get("weights", DEFAULT_WEIGHTS)
+    realized = beat_tension(prev_state, state, vocabs, edo, weights)  # type: ignore[arg-type]
     diff = realized - target_tension
-    return float(diff * diff)
+    return float((diff * diff) / (2.0 * 0.1 * 0.1))
 
 
 def section_style_energy(
@@ -391,15 +407,21 @@ def _pearson_correlation(xs: Sequence[float], ys: Sequence[float]) -> float:
 def compare_tension_curves(
     target: Sequence[Tuple[float, float]],
     realized: Sequence[Tuple[float, float]],
-    sections: Sequence["PlanningSection"],
+    sections: Union["SectionTimeline", Sequence["PlanningSection"]],
 ) -> TensionDeviationReport:
     """Compare target vs. realized tension curves.
 
     Pure function: takes two curves and the section plan, returns a report.
     Comparison is over the intersection of time points present in both
-    curves (curves are expected to share time indexing, but this makes the
-    function robust to minor length mismatches rather than raising).
+    curves, aligning target and realized by arrival beat index k.
     """
+    from aimusic.planning.sections import SectionTimeline
+
+    if isinstance(sections, SectionTimeline):
+        sec_list = sections.sections
+    else:
+        sec_list = tuple(sections)
+
     target_map = _as_time_value_map(target)
     realized_map = _as_time_value_map(realized)
     shared_times = sorted(set(target_map) & set(realized_map))
@@ -420,10 +442,11 @@ def compare_tension_curves(
     max_abs_error = max(abs_errors)
 
     section_errors: Dict[str, float] = {}
-    for section in sections:
+    for section in sec_list:
         section_times = [
             t for t in shared_times
-            if section.start_time <= t < section.end_time
+            if (section.start_time <= t < section.end_time)
+            or (t == section.end_time and section == sec_list[-1])
         ]
         if not section_times:
             continue

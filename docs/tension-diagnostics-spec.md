@@ -128,14 +128,16 @@ Walks consecutive pairs in `path`, calling `beat_tension` for each beat index,
 returning `(time, tension)` pairs. This is what replaces `cli.py`'s inline
 `ROLE_TENSION` logic and the dead `compute_tension_curve`.
 
-### 4.5 `target_tension_curve(sections: Sequence[PlanningSection]) -> List[Tuple[float, float]]`
+### 4.5 `target_tension_curve(sections: Union[SectionTimeline, Sequence[PlanningSection]]) -> List[Tuple[float, float]]`
 
-For each section, linearly interpolates its `target_tension_arc` (which may
-have more than 2 control points — see `PlanningSection.__post_init__`,
-minimum length 2) across `[start_time, end_time)`, producing one `(time,
-value)` sample per beat, matching the time indexing used by
-`realized_tension_curve` so the two curves are directly comparable
-point-for-point.
+Delegates directly to `SectionTimeline` (eliminating duplicated interpolation logic).
+The curve index $k$ is the ARRIVAL beat (same as `realized_tension_curve`), producing
+samples across $k \in [0, \text{total\_beats}]$ point-for-point aligned with `realized_tension_curve`.
+Similarly, `target_tension_at_time(sections, t)` delegates to `SectionTimeline.target_tension(t)`.
+
+Target deviation energy is computed by `transition_target_tension_energy(tau_hat, tau_star, sigma)` as:
+$$E_\tau = \frac{(\hat{\tau} - \tau^*)^2}{2\sigma_\tau^2}$$
+where $\sigma_\tau$ is the tolerance parameter in tension units: a deviation of exactly $\sigma_\tau$ costs 0.5 nat before $\lambda_\tau$ scaling (Decision D2).
 
 ### 4.6 `TensionDeviationReport` + `compare_tension_curves(target, realized, sections) -> TensionDeviationReport`
 

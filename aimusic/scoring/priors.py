@@ -834,11 +834,14 @@ def with_section_terms(
         beat_tension,
         section_style_breakdown,
         section_style_energy,
+        transition_target_tension_energy,
     )
 
     realized_tension = beat_tension(prev, next_st, vocabularies, edo)
     tension_deviation = realized_tension - target_tension
-    target_tension_energy = float(tension_deviation ** 2)
+    target_tension_energy = transition_target_tension_energy(
+        realized_tension, target_tension, weights.sigma_tension
+    )
     target_tension_contribution = float(weights.lambda_target_tension * target_tension_energy)
 
     style_energy = float(section_style_energy(prev, next_st, section_view.section, vocabularies, edo))

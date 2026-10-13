@@ -487,7 +487,7 @@ def _render_midi_preview_wav(
 
     peak = float(np.max(np.abs(samples)))
     if peak > 0:
-        samples = samples * min(0.95 / peak, 1.0)
+        samples *= min(0.95 / peak, 1.0)
 
     wav_path.parent.mkdir(parents=True, exist_ok=True)
     pcm = (samples * 32767.0).clip(-32768, 32767).astype("<i2")

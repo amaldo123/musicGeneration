@@ -783,11 +783,15 @@ def run_method_a(
     for idx, st in enumerate(path):
         if idx > 0 and prev_st is not None:
             t = idx - 1
-            t_tension = target_tension_at_time(endpoints.sections, t)
+            t_tension = timeline.target_tension(idx) if timeline is not None else target_tension_at_time(endpoints.sections, idx)
             r_tension = beat_tension(prev_st, st, resolved_vocabs, run_config.edo)
             dev = r_tension - t_tension
-            sec = get_section_at_time(endpoints.sections, t)
-            t_pen = run_config.prior_weights.lambda_target_tension * (dev ** 2)
+            sec = timeline.at_state(idx) if timeline is not None else get_section_at_time(endpoints.sections, idx)
+            from aimusic.scoring.tension import transition_target_tension_energy
+            t_energy = transition_target_tension_energy(
+                r_tension, t_tension, run_config.prior_weights.sigma_tension
+            )
+            t_pen = run_config.prior_weights.lambda_target_tension * t_energy
             s_pen = run_config.prior_weights.lambda_section_style * section_style_energy(
                 prev_st, st, sec, resolved_vocabs, run_config.edo
             )

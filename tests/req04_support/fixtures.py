@@ -41,7 +41,9 @@ class FixtureRun:
     target_curve: Tuple[Tuple[float, float], ...]
 
 
-# Provisional arcs within [0.1, 0.6]
+# Fixture arcs grounded in empirical reachable range [p5, p95] = [0.0000, 0.6000]
+# (sampled across 2121 legal transitions in tests/fixtures/req04_reachable_range.json)
+
 RISE_16 = Fixture(
     name="RISE_16",
     total_beats=16,
@@ -51,6 +53,7 @@ RISE_16 = Fixture(
             start_time=0,
             end_time=16,
             boundary_level=3,
+            # Control points (0.15, 0.55) lie within [p5=0.0000, p95=0.6000]
             target_tension_arc=(0.15, 0.55),
         ),
     ),
@@ -65,6 +68,7 @@ FALL_16 = Fixture(
             start_time=0,
             end_time=16,
             boundary_level=3,
+            # Control points (0.55, 0.15) lie within [p5=0.0000, p95=0.6000]
             target_tension_arc=(0.55, 0.15),
         ),
     ),
@@ -79,6 +83,7 @@ PLATEAU_16 = Fixture(
             start_time=0,
             end_time=16,
             boundary_level=3,
+            # Control points (0.35, 0.35) lie within [p5=0.0000, p95=0.6000]
             target_tension_arc=(0.35, 0.35),
         ),
     ),
@@ -93,6 +98,7 @@ TWO_SECTION_16 = Fixture(
             start_time=0,
             end_time=8,
             boundary_level=2,
+            # Control points (0.15, 0.55) lie within [p5=0.0000, p95=0.6000]
             target_tension_arc=(0.15, 0.55),
         ),
         PlanningSection(
@@ -100,6 +106,7 @@ TWO_SECTION_16 = Fixture(
             start_time=8,
             end_time=16,
             boundary_level=3,
+            # Control points (0.55, 0.15) lie within [p5=0.0000, p95=0.6000]
             target_tension_arc=(0.55, 0.15),
         ),
     ),
@@ -114,6 +121,7 @@ THREE_SECTION_24 = Fixture(
             start_time=0,
             end_time=8,
             boundary_level=2,
+            # Control points (0.20, 0.40) lie within [p5=0.0000, p95=0.6000]
             target_tension_arc=(0.20, 0.40),
         ),
         PlanningSection(
@@ -121,6 +129,7 @@ THREE_SECTION_24 = Fixture(
             start_time=8,
             end_time=16,
             boundary_level=3,
+            # Control points (0.40, 0.60) lie within [p5=0.0000, p95=0.6000]
             target_tension_arc=(0.40, 0.60),
         ),
         PlanningSection(
@@ -128,6 +137,7 @@ THREE_SECTION_24 = Fixture(
             start_time=16,
             end_time=24,
             boundary_level=2,
+            # Control points (0.60, 0.20) lie within [p5=0.0000, p95=0.6000]
             target_tension_arc=(0.60, 0.20),
         ),
     ),
@@ -142,6 +152,7 @@ EDO19_SMOKE = Fixture(
             start_time=0,
             end_time=4,
             boundary_level=3,
+            # Control points (0.20, 0.50) lie within [p5=0.0000, p95=0.6000]
             target_tension_arc=(0.20, 0.50),
         ),
     ),

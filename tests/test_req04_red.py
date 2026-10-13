@@ -133,7 +133,6 @@ class TestReq04Defects(unittest.TestCase):
         self.assertEqual(lvl_23_at_8, 3)
         self.assertEqual(lvl_32_at_8, 2)
 
-    @unittest.expectedFailure
     def test_F2_target_index_matches_evaluation_curve(self) -> None:
         """F2: The target used for arrival beat k in transition diagnostics must match target curve index k."""
         run_res = run_fixture(
@@ -208,7 +207,6 @@ class TestReq04Defects(unittest.TestCase):
         self.assertNotEqual(n_low, n_high)
 
 
-    @unittest.expectedFailure
     def test_F5_transition_total_equals_sum_of_parts(self) -> None:
         """F5: TransitionDiagnostic.total_log_weight must equal data - energy - penalties within tolerance 1e-9."""
         run_res = run_fixture(

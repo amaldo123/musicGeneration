@@ -128,7 +128,7 @@ def _load_render_module():
         from aimusic.render import TrackInstrumentConfig, render_midi
         from aimusic.render.package import write_render_package
         return TrackInstrumentConfig, render_midi, write_render_package
-    except ImportError as exc:
+    except ImportError:
         print(
             "Error: MIDI rendering requires the 'mido' package.\n"
             "Please install it by running:\n"

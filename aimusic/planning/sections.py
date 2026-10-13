@@ -7,11 +7,14 @@ Follows REQ-04 and Decision D1:
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, List, Optional, Sequence, Tuple
 
 from aimusic.core.config import StyleConfig
 from aimusic.core.vocab import Vocabularies
+
+_logger = logging.getLogger(__name__)
 
 
 def _require_int(name: str, value: int, *, minimum: int = 0) -> None:
@@ -130,6 +133,7 @@ class SectionTimeline:
     sections: Tuple[PlanningSection, ...]
     total_beats: int
     max_boundary_level: int = 3
+    reachable_range: Optional[Tuple[float, float]] = None
 
     def __post_init__(self) -> None:
         if self.sections is None or len(self.sections) == 0:
@@ -200,6 +204,17 @@ class SectionTimeline:
                     f"Section '{sec.name}' boundary_level {sec.boundary_level} "
                     f"exceeds vocabulary maximum {self.max_boundary_level}."
                 )
+
+        # 6. Reachable range warning (soft diagnostic check, not an error)
+        if self.reachable_range is not None:
+            r_min, r_max = self.reachable_range
+            for sec in secs:
+                for idx, val in enumerate(sec.target_tension_arc):
+                    if val < r_min or val > r_max:
+                        _logger.warning(
+                            f"Section '{sec.name}' target_tension_arc[{idx}]={val:.4f} "
+                            f"is outside reachable range [{r_min:.4f}, {r_max:.4f}]."
+                        )
 
     def at_state(self, k: int) -> PlanningSection:
         """Return the PlanningSection governing beat state index k."""

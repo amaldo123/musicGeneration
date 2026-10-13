@@ -64,11 +64,26 @@ class TestPriorWeights(unittest.TestCase):
         self.assertEqual(weights.lambda_data, 1.2)
         self.assertEqual(weights.harmonic, 1.5)
 
+    def test_prior_weights_defaults_and_sigma_tension(self):
+        weights = PriorWeights()
+        self.assertEqual(weights.lambda_target_tension, 0.0)
+        self.assertEqual(weights.lambda_section_style, 0.0)
+        self.assertEqual(weights.sigma_tension, 0.1)
+
+        custom = PriorWeights(sigma_tension=0.05)
+        self.assertEqual(custom.sigma_tension, 0.05)
+
     def test_prior_weights_reject_fully_disabled_or_negative_weights(self):
         with self.assertRaises(ValueError):
             PriorWeights(lambda_data=0.0, lambda_gttm=0.0)
         with self.assertRaises(ValueError):
             PriorWeights(harmonic=-0.1)
+        with self.assertRaises(ValueError):
+            PriorWeights(sigma_tension=0.0)
+        with self.assertRaises(ValueError):
+            PriorWeights(sigma_tension=-0.05)
+        with self.assertRaises(TypeError):
+            PriorWeights(sigma_tension="invalid")  # type: ignore[arg-type]
 
 
 class TestSBConfig(unittest.TestCase):
