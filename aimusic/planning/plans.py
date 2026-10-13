@@ -16,6 +16,7 @@ from aimusic.core.config import (
     PlanMethod,
     PriorWeights,
     SBConfig,
+    SectionStyleWeights,
     SectioningStrategy,
     StyleConfig,
 )
@@ -339,8 +340,14 @@ def _choose_endpoint_state(
 
 
 def build_section_plan(run_config: MethodARunConfig) -> Tuple[PlanningSection, ...]:
+    is_multi_meter = len(run_config.style_config.allowed_meters) > 1
     if run_config.sections is not None:
-        SectionTimeline(run_config.sections, run_config.total_beats)
+        SectionTimeline(
+            run_config.sections,
+            run_config.total_beats,
+            edo=run_config.edo,
+            multi_meter=is_multi_meter,
+        )
         return run_config.sections
 
     plan_config = run_config.plan_config
@@ -360,7 +367,12 @@ def build_section_plan(run_config: MethodARunConfig) -> Tuple[PlanningSection, .
                 groove_family=None,
             ),
         )
-        SectionTimeline(sections, run_config.total_beats)
+        SectionTimeline(
+            sections,
+            run_config.total_beats,
+            edo=run_config.edo,
+            multi_meter=is_multi_meter,
+        )
         return sections
 
     section_names = plan_config.section_names
@@ -400,11 +412,17 @@ def build_section_plan(run_config: MethodARunConfig) -> Tuple[PlanningSection, .
             allowed_meters=last.allowed_meters,
             groove_family=None,
             target_key_id=last.target_key_id,
+            key_region=last.key_region,
             target_density=last.target_density,
             preferred_roles=last.preferred_roles,
         )
     plan = tuple(sections_list)
-    SectionTimeline(plan, run_config.total_beats)
+    SectionTimeline(
+        plan,
+        run_config.total_beats,
+        edo=run_config.edo,
+        multi_meter=is_multi_meter,
+    )
     return plan
 
 
@@ -470,20 +488,21 @@ def _candidate_score(
 
     if weights is not None and section is not None and vocabularies is not None:
         if weights.lambda_section_style > 0.0:
+            sw = weights.style_weights
             if section.allowed_meters and vocabularies.meters.has_id(state.meter_id):
                 meter_label = vocabularies.meters.token_for_id(state.meter_id).label
                 if meter_label in section.allowed_meters:
-                    score += 1.0 * weights.lambda_section_style
+                    score += 1.0 * weights.lambda_section_style * sw.meter
             if section.target_key_id is not None and state.key_id == section.target_key_id:
-                score += 1.5 * weights.lambda_section_style
+                score += 1.5 * weights.lambda_section_style * sw.key_region
             if section.groove_family and vocabularies.grooves.has_id(state.groove_id):
                 groove_tok = vocabularies.grooves.token_for_id(state.groove_id)
                 if groove_tok.family == section.groove_family:
-                    score += 1.0 * weights.lambda_section_style
+                    score += 1.0 * weights.lambda_section_style * sw.groove_family
             if section.preferred_roles and vocabularies.roles.has_id(state.role_id):
                 role_label = vocabularies.roles.token_for_id(state.role_id).label
                 if role_label in section.preferred_roles:
-                    score += 1.0 * weights.lambda_section_style
+                    score += 1.0 * weights.lambda_section_style * sw.role
         if weights.lambda_target_tension > 0.0:
             target_t = section.target_tension_arc[0] if is_start else section.target_tension_arc[-1]
             from aimusic.scoring.tension import beat_tension
@@ -515,15 +534,16 @@ def _build_endpoint_distribution(
         and run_config.prior_weights is not None
         and run_config.prior_weights.lambda_section_style > 0.0
     )
+    sw = run_config.prior_weights.style_weights if run_config.prior_weights else SectionStyleWeights()
 
     groove_ids = list(_groove_anchor_ids(run_config.style_config, vocabularies))
-    if has_style_guidance and sec is not None and sec.groove_family:
+    if has_style_guidance and sec is not None and sec.groove_family and sw.groove_family > 0.0:
         sec_grooves = [g.id for g in vocabularies.grooves if g.family == sec.groove_family]
         if sec_grooves:
             groove_ids = list(dict.fromkeys(sec_grooves + groove_ids))
 
     key_ids = list(_key_anchor_ids(run_config, vocabularies))
-    if has_style_guidance and sec is not None and sec.target_key_id is not None and vocabularies.keys.has_id(sec.target_key_id):
+    if has_style_guidance and sec is not None and sec.target_key_id is not None and sw.key_region > 0.0 and vocabularies.keys.has_id(sec.target_key_id):
         key_ids = list(dict.fromkeys([sec.target_key_id] + key_ids))
 
     head_ids = (1, 2)
@@ -531,7 +551,7 @@ def _build_endpoint_distribution(
 
     scored_candidates: list[tuple[float, BeatState]] = []
     allowed_meter_ids = _meter_ids(run_config.style_config, vocabularies)
-    if has_style_guidance and sec is not None and sec.allowed_meters:
+    if has_style_guidance and sec is not None and sec.allowed_meters and sw.meter > 0.0:
         sec_meters = [
             vocabularies.meters.token_for_label(m).id
             for m in sec.allowed_meters
@@ -544,7 +564,7 @@ def _build_endpoint_distribution(
         beat_in_bar = beat_in_bar_by_meter[meter_id]
         strong_beats = vocabularies.meters.token_for_id(meter_id).strong_beats
         boundary_level = _endpoint_boundary_level(is_start=is_start, beat_in_bar=beat_in_bar, strong_beats=strong_beats)
-        if has_style_guidance and sec is not None and sec.boundary_level > 0 and beat_in_bar == 0:
+        if has_style_guidance and sec is not None and sec.boundary_level > 0 and beat_in_bar == 0 and sw.boundary > 0.0:
             boundary_level = sec.boundary_level
 
         role_ids: tuple[int, ...]
@@ -553,7 +573,7 @@ def _build_endpoint_distribution(
         else:
             role_ids = (0, 1)
 
-        if has_style_guidance and sec is not None and sec.preferred_roles:
+        if has_style_guidance and sec is not None and sec.preferred_roles and sw.role > 0.0:
             pref_roles = [
                 vocabularies.roles.token_for_label(r).id
                 for r in sec.preferred_roles
@@ -730,7 +750,12 @@ def run_method_a(
         endpoints.end_choice.state,
         time_index=run_config.total_beats,
     )
-    timeline = SectionTimeline(sections=endpoints.sections, total_beats=run_config.total_beats)
+    timeline = SectionTimeline(
+        sections=endpoints.sections,
+        total_beats=run_config.total_beats,
+        edo=run_config.edo,
+        multi_meter=len(run_config.style_config.allowed_meters) > 1,
+    )
     graph, _ = build_sparse_graph(
         start_layer=start_endpoint.layer,
         end_layer=end_endpoint.layer,
@@ -792,11 +817,27 @@ def run_method_a(
                 r_tension, t_tension, run_config.prior_weights.sigma_tension
             )
             t_pen = run_config.prior_weights.lambda_target_tension * t_energy
+            is_start = timeline.is_section_start(idx) if timeline is not None else (idx == sec.start_time if sec else False)
+            is_multi = len(run_config.style_config.allowed_meters) > 1
             s_pen = run_config.prior_weights.lambda_section_style * section_style_energy(
-                prev_st, st, sec, resolved_vocabs, run_config.edo
+                prev_st,
+                st,
+                sec,
+                resolved_vocabs,
+                run_config.edo,
+                style_weights=run_config.prior_weights.style_weights,
+                multi_meter=is_multi,
+                multi_meter_alignment_factor=run_config.prior_weights.multi_meter_alignment_factor,
+                is_section_start=is_start,
             )
             s_breakdown = section_style_breakdown(
-                prev_st, st, sec, resolved_vocabs, run_config.edo
+                prev_st,
+                st,
+                sec,
+                resolved_vocabs,
+                run_config.edo,
+                style_weights=run_config.prior_weights.style_weights,
+                is_section_start=is_start,
             )
             data_logp = (
                 prior.logp_next(
@@ -845,7 +886,12 @@ def run_method_a(
         prev_st = st
 
 
-    timeline = SectionTimeline(sections=endpoints.sections, total_beats=run_config.total_beats)
+    timeline = SectionTimeline(
+        sections=endpoints.sections,
+        total_beats=run_config.total_beats,
+        edo=run_config.edo,
+        multi_meter=len(run_config.style_config.allowed_meters) > 1,
+    )
 
     diagnostics = MethodAPlanDiagnostics(
         section_tags=tuple(section.name for section in endpoints.sections),

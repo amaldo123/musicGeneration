@@ -844,8 +844,40 @@ def with_section_terms(
     )
     target_tension_contribution = float(weights.lambda_target_tension * target_tension_energy)
 
-    style_energy = float(section_style_energy(prev, next_st, section_view.section, vocabularies, edo))
-    style_components = dict(section_style_breakdown(prev, next_st, section_view.section, vocabularies, edo))
+    is_multi_meter = getattr(section_view, "multi_meter", False)
+    if not is_multi_meter and section_view.section.allowed_meters:
+        is_multi_meter = len(section_view.section.allowed_meters) > 1
+
+    style_energy = float(
+        section_style_energy(
+            prev,
+            next_st,
+            section_view,
+            vocabularies,
+            edo,
+            style_weights=weights.style_weights,
+            multi_meter=is_multi_meter,
+            multi_meter_alignment_factor=weights.multi_meter_alignment_factor,
+        )
+    )
+    style_breakdown = section_style_breakdown(
+        prev,
+        next_st,
+        section_view,
+        vocabularies,
+        edo,
+        style_weights=weights.style_weights,
+    )
+    style_components = dict(style_breakdown)
+    style_components["weight_meter"] = float(weights.style_weights.meter)
+    style_components["weight_key_region"] = float(weights.style_weights.key_region)
+    style_components["weight_groove_family"] = float(weights.style_weights.groove_family)
+    style_components["weight_role"] = float(weights.style_weights.role)
+    style_components["weight_boundary"] = float(weights.style_weights.boundary)
+    alignment_weight = weights.style_weights.start_alignment * (
+        weights.multi_meter_alignment_factor if is_multi_meter else 1.0
+    )
+    style_components["weight_start_alignment"] = float(alignment_weight)
     section_style_contribution = float(weights.lambda_section_style * style_energy)
 
     final_log_weight = float(

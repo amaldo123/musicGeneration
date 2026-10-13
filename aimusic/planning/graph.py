@@ -647,6 +647,7 @@ def build_sparse_graph(
     d_max: int,
     proposal_budget: Optional[int] = None,
     prior_guided_proposals: Optional[bool] = None,
+    section_guided_proposals: Optional[bool] = None,
     sections: Optional[Union[SectionTimeline, Sequence[PlanningSection]]] = None,
     timeline: Optional[SectionTimeline] = None,
 ) -> tuple[SparseGraph, RNGKey]:
@@ -681,6 +682,11 @@ def build_sparse_graph(
         resolved_sb.prior_guided_proposals
         if prior_guided_proposals is None
         else prior_guided_proposals
+    )
+    resolved_section_guided_proposals = (
+        resolved_sb.section_guided_proposals
+        if section_guided_proposals is None
+        else section_guided_proposals
     )
 
     resolved_timeline = timeline
@@ -757,9 +763,7 @@ def build_sparse_graph(
                     proposal_budget=resolved_proposal_budget,
                     prior_guided_proposals=resolved_prior_guided_proposals,
                     section=source_section,
-                    section_guided_proposals=(
-                        weights is not None and weights.lambda_section_style > 0.0
-                    ),
+                    section_guided_proposals=resolved_section_guided_proposals,
                 )
 
             raw_candidate_count += candidate_result.proposed_count

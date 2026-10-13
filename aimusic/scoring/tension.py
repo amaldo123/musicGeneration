@@ -11,6 +11,7 @@ import statistics
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 
+from aimusic.core.config import SectionStyleWeights
 from aimusic.core.core_types import BeatState
 from aimusic.core.vocab import Vocabularies
 from aimusic.theory.tonal import basic_space_distance, tonal_distance
@@ -260,120 +261,172 @@ def transition_target_tension_energy(
     return float((diff * diff) / (2.0 * 0.1 * 0.1))
 
 
-def section_style_energy(
-    prev_state: Optional[BeatState],
-    next_state: BeatState,
-    section: Optional["PlanningSection"],
-    vocabularies: Vocabularies,
-    edo: int = 12,
-) -> float:
-    """Compute section-style deviation energy penalty for transitioning into next_state."""
-    if section is None:
-        return 0.0
+def _extract_section_context(
+    section_view: Any,
+    *,
+    is_section_start: Optional[bool] = None,
+    multi_meter: Optional[bool] = None,
+) -> Tuple[Optional[Any], bool, bool]:
+    """Extract (section, is_section_start, multi_meter) from section_view or explicit flags."""
+    import aimusic.planning.sections as _sec_mod
 
-    penalty = 0.0
+    sec: Optional[Any] = None
+    start = False
+    mm = False
 
-    # Meter deviation
-    if section.allowed_meters:
-        if vocabularies.meters.has_id(next_state.meter_id):
-            meter_label = vocabularies.meters.token_for_id(next_state.meter_id).label
-            if meter_label not in section.allowed_meters:
-                penalty += 1.0
-        else:
-            penalty += 1.0
+    if isinstance(section_view, _sec_mod.EdgeSectionView):
+        sec = section_view.section
+        start = section_view.is_section_start
+        mm = getattr(section_view, "multi_meter", False)
+    elif isinstance(section_view, _sec_mod.PlanningSection):
+        sec = section_view
+        start = False
+        mm = False
 
-    # Key region deviation
-    if section.target_key_id is not None:
-        if next_state.key_id != section.target_key_id:
-            if vocabularies.keys.has_id(next_state.key_id) and vocabularies.keys.has_id(section.target_key_id):
-                next_root = vocabularies.keys.token_for_id(next_state.key_id).root_pc
-                target_root = vocabularies.keys.token_for_id(section.target_key_id).root_pc
-                dist = tonal_distance(next_root, target_root, edo)
-                penalty += _decay_normalize(dist) * 0.5
-            else:
-                penalty += 0.5
+    if is_section_start is not None:
+        start = is_section_start
+    if multi_meter is not None:
+        mm = multi_meter
+    elif sec is not None and sec.allowed_meters and len(sec.allowed_meters) > 1:
+        mm = True
 
-    # Groove family deviation
-    if section.groove_family:
-        if vocabularies.grooves.has_id(next_state.groove_id):
-            groove_tok = vocabularies.grooves.token_for_id(next_state.groove_id)
-            if groove_tok.family != section.groove_family:
-                penalty += 0.3
-        else:
-            penalty += 0.3
-
-    # Role preference deviation
-    if section.preferred_roles:
-        if vocabularies.roles.has_id(next_state.role_id):
-            role_label = vocabularies.roles.token_for_id(next_state.role_id).label
-            if role_label not in section.preferred_roles:
-                penalty += 0.2
-        else:
-            penalty += 0.2
-
-    return penalty
+    return sec, start, mm
 
 
 def section_style_breakdown(
     prev_state: Optional[BeatState],
     next_state: BeatState,
-    section: Optional["PlanningSection"],
+    section_view: Any,
     vocabularies: Vocabularies,
     edo: int = 12,
+    style_weights: Optional[Any] = None,
+    *,
+    is_section_start: Optional[bool] = None,
 ) -> Dict[str, float]:
-    """Return individual penalty components for section-style deviation."""
+    """Return an ordered mapping of non-negative component energies for section-style deviation."""
+    section, is_start, _ = _extract_section_context(
+        section_view, is_section_start=is_section_start
+    )
+
     if section is None:
         return {
-            "meter_penalty": 0.0,
-            "key_penalty": 0.0,
-            "groove_penalty": 0.0,
-            "role_penalty": 0.0,
+            "meter": 0.0,
+            "key_region": 0.0,
+            "groove_family": 0.0,
+            "role": 0.0,
+            "boundary": 0.0,
+            "start_alignment": 0.0,
         }
 
-    meter_pen = 0.0
+    # 1. meter: 1 if next meter not in section.allowed_meters else 0
+    meter_comp = 0.0
     if section.allowed_meters:
         if vocabularies.meters.has_id(next_state.meter_id):
             meter_label = vocabularies.meters.token_for_id(next_state.meter_id).label
             if meter_label not in section.allowed_meters:
-                meter_pen = 1.0
+                meter_comp = 1.0
         else:
-            meter_pen = 1.0
+            meter_comp = 1.0
 
-    key_pen = 0.0
-    if section.target_key_id is not None:
-        if next_state.key_id != section.target_key_id:
-            if vocabularies.keys.has_id(next_state.key_id) and vocabularies.keys.has_id(section.target_key_id):
-                next_root = vocabularies.keys.token_for_id(next_state.key_id).root_pc
-                target_root = vocabularies.keys.token_for_id(section.target_key_id).root_pc
-                dist = tonal_distance(next_root, target_root, edo)
-                key_pen = _decay_normalize(dist) * 0.5
-            else:
-                key_pen = 0.5
+    # 2. key_region: min over region roots of d/(1+d), d = tonal_distance(next key root, region root, edo); 0 when no region
+    key_comp = 0.0
+    region = section.key_region
+    if region:
+        if vocabularies.keys.has_id(next_state.key_id):
+            next_root = vocabularies.keys.token_for_id(next_state.key_id).root_pc
+            d_min = min(tonal_distance(next_root, r, edo) for r in region)
+            key_comp = float(d_min / (1.0 + d_min))
+        else:
+            key_comp = 0.5
 
-    groove_pen = 0.0
+    # 3. groove_family: 1 if groove family differs from section.groove_family else 0
+    groove_comp = 0.0
     if section.groove_family:
         if vocabularies.grooves.has_id(next_state.groove_id):
             groove_tok = vocabularies.grooves.token_for_id(next_state.groove_id)
             if groove_tok.family != section.groove_family:
-                groove_pen = 0.3
+                groove_comp = 1.0
         else:
-            groove_pen = 0.3
+            groove_comp = 1.0
 
-    role_pen = 0.0
+    # 4. role: 1 if role label is not in section.preferred_roles else 0
+    role_comp = 0.0
     if section.preferred_roles:
         if vocabularies.roles.has_id(next_state.role_id):
             role_label = vocabularies.roles.token_for_id(next_state.role_id).label
             if role_label not in section.preferred_roles:
-                role_pen = 0.2
+                role_comp = 1.0
         else:
-            role_pen = 0.2
+            role_comp = 1.0
+
+    # 5. boundary: at section-start arrival state, abs(next.boundary_lvl - section.boundary_level);
+    # in interior, 1 if next.boundary_lvl >= section.boundary_level and section.boundary_level >= 2 else 0
+    if is_start:
+        boundary_comp = float(abs(next_state.boundary_lvl - section.boundary_level))
+    else:
+        boundary_comp = (
+            1.0
+            if (next_state.boundary_lvl >= section.boundary_level and section.boundary_level >= 2)
+            else 0.0
+        )
+
+    # 6. start_alignment: at section-start arrival state, 1 if next.beat_in_bar != 0 else 0; 0 elsewhere
+    if is_start:
+        start_alignment_comp = 1.0 if next_state.beat_in_bar != 0 else 0.0
+    else:
+        start_alignment_comp = 0.0
 
     return {
-        "meter_penalty": meter_pen,
-        "key_penalty": key_pen,
-        "groove_penalty": groove_pen,
-        "role_penalty": role_pen,
+        "meter": meter_comp,
+        "key_region": key_comp,
+        "groove_family": groove_comp,
+        "role": role_comp,
+        "boundary": boundary_comp,
+        "start_alignment": start_alignment_comp,
     }
+
+
+def section_style_energy(
+    prev_state: Optional[BeatState],
+    next_state: BeatState,
+    section_view: Any,
+    vocabularies: Vocabularies,
+    edo: int = 12,
+    style_weights: Optional[Any] = None,
+    *,
+    multi_meter: Optional[bool] = None,
+    multi_meter_alignment_factor: float = 3.0,
+    is_section_start: Optional[bool] = None,
+) -> float:
+    """Compute section-style deviation energy penalty for transitioning into next_state.
+
+    Returns sum(weight_c * component_c). Unknown or unset preferences contribute 0.
+    """
+    resolved_weights = SectionStyleWeights() if style_weights is None else style_weights
+    section, is_start, is_multi = _extract_section_context(
+        section_view, is_section_start=is_section_start, multi_meter=multi_meter
+    )
+
+    components = section_style_breakdown(
+        prev_state,
+        next_state,
+        section_view,
+        vocabularies,
+        edo=edo,
+        style_weights=resolved_weights,
+        is_section_start=is_start,
+    )
+
+    alignment_factor = multi_meter_alignment_factor if is_multi else 1.0
+    total = (
+        resolved_weights.meter * components["meter"]
+        + resolved_weights.key_region * components["key_region"]
+        + resolved_weights.groove_family * components["groove_family"]
+        + resolved_weights.role * components["role"]
+        + resolved_weights.boundary * components["boundary"]
+        + (resolved_weights.start_alignment * alignment_factor) * components["start_alignment"]
+    )
+    return float(total)
 
 
 

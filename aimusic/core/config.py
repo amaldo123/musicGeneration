@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from math import isfinite
 from typing import Optional, Sequence, Tuple
@@ -185,6 +185,29 @@ class StyleConfig:
 
 
 @dataclass(frozen=True)
+class SectionStyleWeights:
+    """Component weights for section style energies (all non-negative)."""
+
+    meter: float = 1.0
+    key_region: float = 0.5
+    groove_family: float = 0.3
+    role: float = 0.2
+    boundary: float = 0.6
+    start_alignment: float = 1.0
+
+    def __post_init__(self) -> None:
+        for name in (
+            "meter",
+            "key_region",
+            "groove_family",
+            "role",
+            "boundary",
+            "start_alignment",
+        ):
+            _require_real(name, getattr(self, name), minimum=0.0)
+
+
+@dataclass(frozen=True)
 class PriorWeights:
     """Relative weighting for corpus priors and GTTM feature families."""
 
@@ -192,6 +215,8 @@ class PriorWeights:
     lambda_gttm: float = 1.0
     lambda_target_tension: float = 0.0
     lambda_section_style: float = 0.0
+    style_weights: SectionStyleWeights = field(default_factory=SectionStyleWeights)
+    multi_meter_alignment_factor: float = 3.0
     sigma_tension: float = 0.1
     meter: float = 1.0
     grouping: float = 1.0
@@ -206,6 +231,7 @@ class PriorWeights:
             "lambda_gttm",
             "lambda_target_tension",
             "lambda_section_style",
+            "multi_meter_alignment_factor",
             "sigma_tension",
             "meter",
             "grouping",
@@ -215,6 +241,8 @@ class PriorWeights:
             "groove",
         ):
             _require_real(name, getattr(self, name), minimum=0.0)
+        if not isinstance(self.style_weights, SectionStyleWeights):
+            raise TypeError("style_weights must be a SectionStyleWeights instance.")
         if self.sigma_tension <= 0.0:
             raise ValueError("sigma_tension must be > 0.")
         if self.lambda_data == 0.0 and self.lambda_gttm == 0.0:
@@ -275,6 +303,7 @@ class SBConfig:
     # and aimusic/planning/graph.py).
     proposal_budget: int = 256
     prior_guided_proposals: bool = False
+    section_guided_proposals: bool = False
     log_underflow_floor: float = -745.0
     raise_on_non_convergence: bool = False
     backend_selection: SBBackend = SBBackend.NUMPY
@@ -293,6 +322,8 @@ class SBConfig:
         _require_int("proposal_budget", self.proposal_budget, minimum=1)
         if not isinstance(self.prior_guided_proposals, bool):
             raise TypeError("prior_guided_proposals must be a bool.")
+        if not isinstance(self.section_guided_proposals, bool):
+            raise TypeError("section_guided_proposals must be a bool.")
         _require_real("log_underflow_floor", self.log_underflow_floor)
         if self.log_underflow_floor > 0.0:
             raise ValueError(

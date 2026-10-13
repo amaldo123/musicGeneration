@@ -47,6 +47,7 @@ class PlanningSection:
     allowed_meters: Optional[Tuple[str, ...]] = None
     groove_family: Optional[str] = None
     target_key_id: Optional[int] = None
+    key_region: Optional[Tuple[int, ...]] = None
     target_density: Optional[float] = None
     preferred_roles: Optional[Tuple[str, ...]] = None
 
@@ -78,8 +79,22 @@ class PlanningSection:
         if self.groove_family is not None:
             if not isinstance(self.groove_family, str) or not self.groove_family.strip():
                 raise SectionPlanError(f"Section '{self.name}' groove_family must be a non-empty string.")
-        if self.target_key_id is not None:
+
+        if self.key_region is not None:
+            region = tuple(self.key_region)
+            if not region:
+                raise SectionPlanError(f"Section '{self.name}' key_region must not be empty if specified.")
+            for r in region:
+                _require_int(f"Section '{self.name}' key_region entry", r, minimum=0)
+            object.__setattr__(self, "key_region", region)
+            if self.target_key_id is None:
+                object.__setattr__(self, "target_key_id", region[0])
+            else:
+                _require_int("target_key_id", self.target_key_id, minimum=0)
+        elif self.target_key_id is not None:
             _require_int("target_key_id", self.target_key_id, minimum=0)
+            object.__setattr__(self, "key_region", (self.target_key_id,))
+
         if self.target_density is not None:
             _require_real("target_density", self.target_density, minimum=0.0)
             if self.target_density > 1.0:
@@ -101,6 +116,7 @@ class EdgeSectionView:
     is_section_start: bool
     target_tension: float
     arrival_time: int
+    multi_meter: bool = False
 
 
 def interpolate_arc(arc: Sequence[float], offset: int | float, length: int) -> float:
@@ -134,6 +150,8 @@ class SectionTimeline:
     total_beats: int
     max_boundary_level: int = 3
     reachable_range: Optional[Tuple[float, float]] = None
+    edo: int = 12
+    multi_meter: bool = False
 
     def __post_init__(self) -> None:
         if self.sections is None or len(self.sections) == 0:
@@ -144,6 +162,13 @@ class SectionTimeline:
 
         if not isinstance(self.total_beats, int) or isinstance(self.total_beats, bool) or self.total_beats < 1:
             raise SectionPlanError(f"total_beats must be an int >= 1, got {self.total_beats}.")
+
+        _require_int("edo", self.edo, minimum=1)
+        if not isinstance(self.multi_meter, bool):
+            raise TypeError("multi_meter must be a bool.")
+        if not self.multi_meter:
+            if any(sec.allowed_meters and len(sec.allowed_meters) > 1 for sec in secs):
+                object.__setattr__(self, "multi_meter", True)
 
         # 1. First section starts at 0
         if secs[0].start_time != 0:
@@ -184,8 +209,14 @@ class SectionTimeline:
                 )
             seen_names.add(sec.name)
 
-        # 5. Arc, density, and boundary level validations per section
+        # 5. Arc, density, boundary level, and key_region validations per section
         for sec in secs:
+            if sec.key_region is not None:
+                for r in sec.key_region:
+                    if r < 0 or r >= self.edo:
+                        raise SectionPlanError(
+                            f"Section '{sec.name}' key_region pitch class {r} is outside [0, {self.edo})."
+                        )
             if len(sec.target_tension_arc) < 2:
                 raise SectionPlanError(
                     f"Section '{sec.name}' target_tension_arc must contain at least 2 points."
@@ -276,6 +307,7 @@ class SectionTimeline:
             is_section_start=is_start,
             target_tension=tension,
             arrival_time=k,
+            multi_meter=self.multi_meter,
         )
 
     def as_curve(self) -> List[Tuple[int, float]]:
@@ -352,6 +384,7 @@ class SectionTimeline:
                         allowed_meters=prev.allowed_meters,
                         groove_family=prev.groove_family,
                         target_key_id=prev.target_key_id,
+                        key_region=prev.key_region,
                         target_density=prev.target_density,
                         preferred_roles=prev.preferred_roles,
                     )
@@ -364,6 +397,7 @@ class SectionTimeline:
                     allowed_meters=sec.allowed_meters,
                     groove_family=sec.groove_family,
                     target_key_id=sec.target_key_id,
+                    key_region=sec.key_region,
                     target_density=sec.target_density,
                     preferred_roles=sec.preferred_roles,
                 )
@@ -374,6 +408,9 @@ class SectionTimeline:
                     sections=tuple(new_sections),
                     total_beats=self.total_beats,
                     max_boundary_level=self.max_boundary_level,
+                    reachable_range=self.reachable_range,
+                    edo=self.edo,
+                    multi_meter=self.multi_meter,
                 )
                 return new_timeline, changes
             return self, changes
