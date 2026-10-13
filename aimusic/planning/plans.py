@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -35,7 +35,6 @@ from aimusic.planning.sb import (
     solve_sb,
 )
 from aimusic.scoring.priors import NullPrior, Prior
-from aimusic.theory.edo import EDO
 from aimusic.theory.tonal import get_fifth_steps
 
 
@@ -66,65 +65,42 @@ def _state_sort_key(state: BeatState) -> tuple[int, int, int, int, int, int, int
     )
 
 
-@dataclass(frozen=True)
-class PlanningSection:
-    """Single section descriptor for structural planning and generative section guidance."""
-
-    name: str
-    start_time: int
-    end_time: int
-    boundary_level: int
-    target_tension_arc: Tuple[float, ...] = (0.2, 0.85, 0.25)
-    allowed_meters: Optional[Tuple[str, ...]] = None
-    groove_family: Optional[str] = None
-    target_key_id: Optional[int] = None
-    target_density: Optional[float] = None
-    preferred_roles: Optional[Tuple[str, ...]] = None
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.name, str) or not self.name.strip():
-            raise ValueError("name must be a non-empty string.")
-        _require_int("start_time", self.start_time, minimum=0)
-        _require_int("end_time", self.end_time, minimum=1)
-        if self.end_time <= self.start_time:
-            raise ValueError("end_time must be > start_time.")
-        _require_int("boundary_level", self.boundary_level, minimum=0)
-        arc = tuple(float(item) for item in self.target_tension_arc)
-        if len(arc) < 2:
-            raise ValueError("target_tension_arc must contain at least two values.")
-        for idx, value in enumerate(arc):
-            _require_real(f"target_tension_arc[{idx}]", value)
-        object.__setattr__(self, "target_tension_arc", arc)
-
-        if self.allowed_meters is not None:
-            meters = tuple(self.allowed_meters)
-            if not meters or any(not isinstance(m, str) or not m.strip() for m in meters):
-                raise ValueError("allowed_meters must be a tuple of non-empty strings.")
-            object.__setattr__(self, "allowed_meters", meters)
-        if self.groove_family is not None:
-            if not isinstance(self.groove_family, str) or not self.groove_family.strip():
-                raise ValueError("groove_family must be a non-empty string.")
-        if self.target_key_id is not None:
-            _require_int("target_key_id", self.target_key_id, minimum=0)
-        if self.target_density is not None:
-            _require_real("target_density", self.target_density, minimum=0.0)
-            if self.target_density > 1.0:
-                raise ValueError("target_density must be <= 1.0.")
-        if self.preferred_roles is not None:
-            roles = tuple(self.preferred_roles)
-            if not roles or any(not isinstance(r, str) or not r.strip() for r in roles):
-                raise ValueError("preferred_roles must be a tuple of non-empty strings.")
-            object.__setattr__(self, "preferred_roles", roles)
+from aimusic.planning.sections import (
+    PlanningSection,
+    SectionPlanError,
+    SectionTimeline,
+)
 
 
 def get_section_at_time(
-    sections: Sequence[PlanningSection], t: int
+    sections: Sequence[PlanningSection] | SectionTimeline, t: int
 ) -> Optional[PlanningSection]:
-    """Find the PlanningSection governing beat time index t."""
-    for section in sections:
-        if section.start_time <= t < section.end_time:
-            return section
-    return None
+    """Find the PlanningSection governing state index t.
+
+    .. deprecated::
+        Use :class:`SectionTimeline` and ``timeline.at_state(k)`` instead.
+        This is a STATE lookup (beat state s_t belongs to section(t)).
+    """
+    import warnings
+    warnings.warn(
+        "get_section_at_time is deprecated; use SectionTimeline.at_state instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    if isinstance(sections, SectionTimeline):
+        try:
+            return sections.at_state(t)
+        except (IndexError, SectionPlanError):
+            return None
+    try:
+        total_beats = max(s.end_time for s in sections) if sections else 0
+        timeline = SectionTimeline(tuple(sections), total_beats=total_beats)
+        return timeline.at_state(t)
+    except Exception:
+        for section in sections:
+            if section.start_time <= t < section.end_time:
+                return section
+        return None
 
 
 
@@ -239,6 +215,7 @@ class MethodAPlanDiagnostics:
     bridge_converged: bool
     rng_stream_ids: Tuple[str, ...]
     transition_diagnostics: Tuple[TransitionDiagnostic, ...] = ()
+    timeline: Optional[SectionTimeline] = None
 
 
 @dataclass(frozen=True)
@@ -258,6 +235,7 @@ class MethodAPlanResult:
     sampled_path: Optional[SampledBridgePath]
     diagnostics: MethodAPlanDiagnostics
     path_edge_diagnostics: Tuple[EdgeScoreDiagnostics, ...] = ()
+    timeline: Optional[SectionTimeline] = None
 
 
 @dataclass(frozen=True)
@@ -362,6 +340,7 @@ def _choose_endpoint_state(
 
 def build_section_plan(run_config: MethodARunConfig) -> Tuple[PlanningSection, ...]:
     if run_config.sections is not None:
+        SectionTimeline(run_config.sections, run_config.total_beats)
         return run_config.sections
 
     plan_config = run_config.plan_config
@@ -371,16 +350,18 @@ def build_section_plan(run_config: MethodARunConfig) -> Tuple[PlanningSection, .
             if plan_config.section_names
             else "method_a_single_pass"
         )
-        return (
+        sections = (
             PlanningSection(
                 name=name,
                 start_time=0,
                 end_time=run_config.total_beats,
                 boundary_level=3,
                 allowed_meters=run_config.style_config.allowed_meters,
-                groove_family=run_config.style_config.groove_families[0] if run_config.style_config.groove_families else None,
+                groove_family=None,
             ),
         )
+        SectionTimeline(sections, run_config.total_beats)
+        return sections
 
     section_names = plan_config.section_names
     section_count = len(section_names)
@@ -390,40 +371,41 @@ def build_section_plan(run_config: MethodARunConfig) -> Tuple[PlanningSection, .
         )
     chunk = run_config.total_beats // section_count
     remainder = run_config.total_beats % section_count
-    sections = []
+    sections_list = []
     cursor = 0
-    groove_fams = run_config.style_config.groove_families
     for idx, name in enumerate(section_names):
         length = chunk + (1 if idx < remainder else 0)
         next_cursor = cursor + max(1, length)
-        groove_fam = groove_fams[idx % len(groove_fams)] if groove_fams else None
-        sections.append(
+        start_tension = min(0.9, 0.2 + (0.1 * idx))
+        sections_list.append(
             PlanningSection(
                 name=name,
                 start_time=cursor,
                 end_time=next_cursor,
                 boundary_level=3 if idx == section_count - 1 else 2,
-                target_tension_arc=(0.2 + (0.1 * idx), 0.8, 0.25),
+                target_tension_arc=(start_tension, 0.8, 0.25),
                 allowed_meters=run_config.style_config.allowed_meters,
-                groove_family=groove_fam,
+                groove_family=None,
             )
         )
         cursor = next_cursor
-    last = sections[-1]
+    last = sections_list[-1]
     if last.end_time != run_config.total_beats:
-        sections[-1] = PlanningSection(
+        sections_list[-1] = PlanningSection(
             name=last.name,
             start_time=last.start_time,
             end_time=run_config.total_beats,
             boundary_level=last.boundary_level,
             target_tension_arc=last.target_tension_arc,
             allowed_meters=last.allowed_meters,
-            groove_family=last.groove_family,
+            groove_family=None,
             target_key_id=last.target_key_id,
             target_density=last.target_density,
             preferred_roles=last.preferred_roles,
         )
-    return tuple(sections)
+    plan = tuple(sections_list)
+    SectionTimeline(plan, run_config.total_beats)
+    return plan
 
 
 def _meter_ids(style_config: StyleConfig, vocabularies: Vocabularies) -> Tuple[int, ...]:
@@ -565,6 +547,7 @@ def _build_endpoint_distribution(
         if has_style_guidance and sec is not None and sec.boundary_level > 0 and beat_in_bar == 0:
             boundary_level = sec.boundary_level
 
+        role_ids: tuple[int, ...]
         if is_start or boundary_level > 0:
             role_ids = (0, 1) if is_start else (3, 2)
         else:
@@ -856,6 +839,8 @@ def run_method_a(
         prev_st = st
 
 
+    timeline = SectionTimeline(sections=endpoints.sections, total_beats=run_config.total_beats)
+
     diagnostics = MethodAPlanDiagnostics(
         section_tags=tuple(section.name for section in endpoints.sections),
         target_tension_arcs=tuple(section.target_tension_arc for section in endpoints.sections),
@@ -870,6 +855,7 @@ def run_method_a(
         bridge_converged=solution.trace.converged,
         rng_stream_ids=stream_ids,
         transition_diagnostics=tuple(trans_diags),
+        timeline=timeline,
     )
     return MethodAPlanResult(
         run_config=run_config,
@@ -885,6 +871,7 @@ def run_method_a(
         sampled_path=sampled_path,
         diagnostics=diagnostics,
         path_edge_diagnostics=graph.diagnostics_for_path(path),
+        timeline=timeline,
     ), next_key
 
 
