@@ -839,17 +839,16 @@ def build_sparse_graph(
             )
             if len(source_edges) > resolved_sb.d_max:
                 outdegree_pruned_count += len(source_edges) - resolved_sb.d_max
-            trimmed_edges = source_edges[: resolved_sb.d_max]
             if (
                 edge_sec_view is not None
                 and edge_sec_view.is_section_start
                 and getattr(edge_sec_view.section, "boundary_level", 0) > 0
             ):
                 target_bnd = edge_sec_view.section.boundary_level
-                if not any(e.target.boundary_lvl == target_bnd for e in trimmed_edges):
-                    matching = [e for e in source_edges if e.target.boundary_lvl == target_bnd]
-                    if matching and trimmed_edges:
-                        trimmed_edges = trimmed_edges[:-1] + [matching[0]]
+                matching = [e for e in source_edges if e.target.boundary_lvl == target_bnd]
+                trimmed_edges = (matching if matching else source_edges)[: resolved_sb.d_max]
+            else:
+                trimmed_edges = source_edges[: resolved_sb.d_max]
             kept_edges.extend(trimmed_edges)
             for edge in trimmed_edges:
                 if edge.target not in best_incoming or edge.log_weight > best_incoming[edge.target]:
@@ -889,17 +888,16 @@ def build_sparse_graph(
                         _state_sort_key(state),
                     ),
                 )
-                kept_states = tuple(ranked_candidates[: resolved_sb.k_max])
                 if (
                     edge_sec_view is not None
                     and edge_sec_view.is_section_start
                     and getattr(edge_sec_view.section, "boundary_level", 0) > 0
                 ):
                     target_bnd = edge_sec_view.section.boundary_level
-                    if not any(s.boundary_lvl == target_bnd for s in kept_states):
-                        matching_states = [s for s in ranked_candidates if s.boundary_lvl == target_bnd]
-                        if matching_states and kept_states:
-                            kept_states = kept_states[:-1] + (matching_states[0],)
+                    matching_cands = [s for s in ranked_candidates if s.boundary_lvl == target_bnd]
+                    kept_states = tuple((matching_cands if matching_cands else ranked_candidates)[: resolved_sb.k_max])
+                else:
+                    kept_states = tuple(ranked_candidates[: resolved_sb.k_max])
                 kept_state_set = set(kept_states)
                 for state in ranked_candidates[resolved_sb.k_max :]:
                     pruned_states.append(

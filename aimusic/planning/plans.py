@@ -436,10 +436,15 @@ def _meter_ids(style_config: StyleConfig, vocabularies: Vocabularies) -> Tuple[i
     return tuple(dict.fromkeys(ids))
 
 
-def _key_anchor_ids(run_config: MethodARunConfig, vocabularies: Vocabularies) -> Tuple[int, ...]:
-    fifth = get_fifth_steps(run_config.edo) % len(vocabularies.keys)
-    anchors = (0, fifth, len(vocabularies.keys) // 2)
-    return tuple(dict.fromkeys(anchor % len(vocabularies.keys) for anchor in anchors))
+def _key_anchor_ids(
+    run_config: MethodARunConfig,
+    vocabularies: Vocabularies,
+    edo: Optional[int] = None,
+) -> Tuple[int, ...]:
+    resolved_edo = run_config.edo if edo is None else edo
+    fifth = get_fifth_steps(resolved_edo) % resolved_edo
+    anchors = (0, fifth, resolved_edo // 2)
+    return tuple(dict.fromkeys(anchor % resolved_edo for anchor in anchors))
 
 
 def _chord_id_for(key_id: int, quality: str, vocabularies: Vocabularies) -> int:
@@ -455,6 +460,37 @@ def _groove_anchor_ids(style_config: StyleConfig, vocabularies: Vocabularies) ->
         if groove.family in style_config.groove_families:
             ids.append(groove.id)
     return tuple(dict.fromkeys(ids[: max(1, min(4, len(ids)))]))
+
+
+def _is_legal_boundary_level(
+    level: int,
+    beat_in_bar: int,
+    strong_beats: Sequence[int],
+) -> bool:
+    """Check whether a boundary level is legal at the given beat position.
+
+    In GTTM / candidates:
+      - Level 0 (none): legal anywhere.
+      - Level 1 (local): requires a strong beat (beat_in_bar in strong_beats).
+      - Level 2 (phrase) and Level 3 (section): require a downbeat (beat_in_bar == 0).
+    """
+    if level <= 0:
+        return True
+    if level == 1:
+        return beat_in_bar in strong_beats
+    return beat_in_bar == 0
+
+
+def _highest_legal_boundary_level(
+    beat_in_bar: int,
+    strong_beats: Sequence[int],
+    max_level: int = 3,
+) -> int:
+    """Return the highest legal boundary level for the given beat position."""
+    for lvl in range(max_level, -1, -1):
+        if _is_legal_boundary_level(lvl, beat_in_bar, strong_beats):
+            return lvl
+    return 0
 
 
 def _endpoint_boundary_level(*, is_start: bool, beat_in_bar: int, strong_beats: Tuple[int, ...]) -> int:
@@ -474,7 +510,24 @@ def _candidate_score(
     section: Optional[PlanningSection] = None,
     vocabularies: Optional[Vocabularies] = None,
     weights: Optional[PriorWeights] = None,
+    target_tension: Optional[float] = None,
+    edo: int = 12,
 ) -> float:
+    """Score an endpoint candidate state against priors, boundary levels, and section targets.
+
+    Mapping from SectionStyleWeights (scaled by lambda_section_style):
+      - Meter: + sw.meter * lambda_section_style when state.meter is in section.allowed_meters.
+      - Key region: + key_affinity * sw.key_region * lambda_section_style, where key_affinity
+        is 1.0 / (1.0 + d_min) with d_min = min(tonal_distance(state_root, r, edo) for r in key_region)
+        (or 1.0 if state.key_id == section.target_key_id).
+      - Groove family: + sw.groove_family * lambda_section_style when state.groove matches section.groove_family.
+      - Role: + sw.role * lambda_section_style when state.role is in section.preferred_roles.
+
+    Target tension deviation (scaled by lambda_target_tension):
+      - Gaussian energy: (tau_hat - tau_star)^2 / (2 * sigma_tension^2)
+        evaluated via transition_target_tension_energy(rel_t, target_tension, weights.sigma_tension),
+        subtracted as: - lambda_target_tension * e_tau.
+    """
     score = 0.0
     score += 2.0 if state.beat_in_bar == 0 else 0.4
     score += 1.5 if state.boundary_lvl == boundary_level else 0.0
@@ -492,23 +545,35 @@ def _candidate_score(
             if section.allowed_meters and vocabularies.meters.has_id(state.meter_id):
                 meter_label = vocabularies.meters.token_for_id(state.meter_id).label
                 if meter_label in section.allowed_meters:
-                    score += 1.0 * weights.lambda_section_style * sw.meter
-            if section.target_key_id is not None and state.key_id == section.target_key_id:
-                score += 1.5 * weights.lambda_section_style * sw.key_region
+                    score += sw.meter * weights.lambda_section_style
+            if section.key_region and vocabularies.keys.has_id(state.key_id):
+                state_root = vocabularies.keys.token_for_id(state.key_id).root_pc
+                from aimusic.theory.tonal import tonal_distance
+                d_min = min(tonal_distance(state_root, r, edo) for r in section.key_region)
+                key_affinity = 1.0 / (1.0 + float(d_min))
+                score += key_affinity * sw.key_region * weights.lambda_section_style
+            elif section.target_key_id is not None and state.key_id == section.target_key_id:
+                score += sw.key_region * weights.lambda_section_style
             if section.groove_family and vocabularies.grooves.has_id(state.groove_id):
                 groove_tok = vocabularies.grooves.token_for_id(state.groove_id)
                 if groove_tok.family == section.groove_family:
-                    score += 1.0 * weights.lambda_section_style * sw.groove_family
+                    score += sw.groove_family * weights.lambda_section_style
             if section.preferred_roles and vocabularies.roles.has_id(state.role_id):
                 role_label = vocabularies.roles.token_for_id(state.role_id).label
                 if role_label in section.preferred_roles:
-                    score += 1.0 * weights.lambda_section_style * sw.role
-        if weights.lambda_target_tension > 0.0:
-            target_t = section.target_tension_arc[0] if is_start else section.target_tension_arc[-1]
-            from aimusic.scoring.tension import beat_tension
-            rel_t = beat_tension(None, state, vocabularies, len(vocabularies.keys))
-            dev = abs(rel_t - target_t)
-            score -= dev * 2.0 * weights.lambda_target_tension
+                    score += sw.role * weights.lambda_section_style
+            if section.boundary_level > 0 and state.boundary_lvl != section.boundary_level:
+                score -= sw.boundary * weights.lambda_section_style * abs(state.boundary_lvl - section.boundary_level)
+            if state.beat_in_bar != 0:
+                is_multi = vocabularies.meters is not None and len(vocabularies.meters) > 1
+                align_factor = weights.multi_meter_alignment_factor if is_multi else 1.0
+                score -= sw.start_alignment * weights.lambda_section_style * align_factor
+
+        if weights.lambda_target_tension > 0.0 and target_tension is not None:
+            from aimusic.scoring.tension import beat_tension, transition_target_tension_energy
+            rel_t = beat_tension(None, state, vocabularies, edo)
+            e_tau = transition_target_tension_energy(rel_t, target_tension, weights.sigma_tension)
+            score -= weights.lambda_target_tension * e_tau
 
     return score
 
@@ -521,13 +586,36 @@ def _build_endpoint_distribution(
     run_config: MethodARunConfig,
     vocabularies: Vocabularies,
     sections: Optional[Sequence[PlanningSection]] = None,
+    timeline: Optional[SectionTimeline] = None,
+    edo: Optional[int] = None,
 ) -> EndpointDistribution:
+    resolved_edo = run_config.edo if edo is None else edo
     plan_config = run_config.plan_config
-    sec = (
-        get_section_at_time(sections, time_index if is_start else max(0, time_index - 1))
-        if sections
-        else None
-    )
+
+    if timeline is not None:
+        resolved_timeline = timeline
+    elif sections is not None:
+        resolved_timeline = SectionTimeline(
+            tuple(sections),
+            total_beats=run_config.total_beats,
+            edo=resolved_edo,
+            multi_meter=len(run_config.style_config.allowed_meters) > 1,
+        )
+    else:
+        sec_plan = build_section_plan(run_config)
+        resolved_timeline = SectionTimeline(
+            tuple(sec_plan),
+            total_beats=run_config.total_beats,
+            edo=resolved_edo,
+            multi_meter=len(run_config.style_config.allowed_meters) > 1,
+        )
+
+    if is_start:
+        sec = resolved_timeline.at_state(0)
+        target_tension = float(resolved_timeline.target_tension(0))
+    else:
+        sec = resolved_timeline.at_state(run_config.total_beats)
+        target_tension = float(resolved_timeline.target_tension(run_config.total_beats))
 
     has_style_guidance = (
         sec is not None
@@ -542,9 +630,14 @@ def _build_endpoint_distribution(
         if sec_grooves:
             groove_ids = list(dict.fromkeys(sec_grooves + groove_ids))
 
-    key_ids = list(_key_anchor_ids(run_config, vocabularies))
-    if has_style_guidance and sec is not None and sec.target_key_id is not None and sw.key_region > 0.0 and vocabularies.keys.has_id(sec.target_key_id):
-        key_ids = list(dict.fromkeys([sec.target_key_id] + key_ids))
+    key_ids = list(_key_anchor_ids(run_config, vocabularies, edo=resolved_edo))
+    if has_style_guidance and sec is not None and sw.key_region > 0.0:
+        if sec.key_region:
+            sec_keys = [k for k in sec.key_region if vocabularies.keys.has_id(k)]
+            if sec_keys:
+                key_ids = list(dict.fromkeys(sec_keys + key_ids))
+        elif sec.target_key_id is not None and vocabularies.keys.has_id(sec.target_key_id):
+            key_ids = list(dict.fromkeys([sec.target_key_id] + key_ids))
 
     head_ids = (1, 2)
     chord_qualities = ("maj", "min")
@@ -563,9 +656,41 @@ def _build_endpoint_distribution(
     for meter_id in allowed_meter_ids:
         beat_in_bar = beat_in_bar_by_meter[meter_id]
         strong_beats = vocabularies.meters.token_for_id(meter_id).strong_beats
-        boundary_level = _endpoint_boundary_level(is_start=is_start, beat_in_bar=beat_in_bar, strong_beats=strong_beats)
-        if has_style_guidance and sec is not None and sec.boundary_level > 0 and beat_in_bar == 0 and sw.boundary > 0.0:
-            boundary_level = sec.boundary_level
+
+        if is_start:
+            desired_level = sec.boundary_level if sec is not None else 3
+            if _is_legal_boundary_level(desired_level, beat_in_bar, strong_beats):
+                boundary_level = desired_level
+            else:
+                boundary_level = _highest_legal_boundary_level(beat_in_bar, strong_beats)
+                sec_name = sec.name if sec is not None else "start"
+                _logger.info(
+                    "Start endpoint boundary_level %d for section '%s' is illegal at beat_in_bar=%d; "
+                    "falling back to highest legal level %d",
+                    desired_level,
+                    sec_name,
+                    beat_in_bar,
+                    boundary_level,
+                )
+        else:
+            base_lvl = _endpoint_boundary_level(is_start=False, beat_in_bar=beat_in_bar, strong_beats=strong_beats)
+            if has_style_guidance and sec is not None and sw.boundary > 0.0:
+                desired_level = sec.boundary_level
+                if _is_legal_boundary_level(desired_level, beat_in_bar, strong_beats):
+                    boundary_level = desired_level
+                else:
+                    boundary_level = _highest_legal_boundary_level(beat_in_bar, strong_beats)
+                    sec_name = sec.name if sec is not None else "end"
+                    _logger.info(
+                        "End endpoint boundary_level %d for section '%s' is illegal at beat_in_bar=%d; "
+                        "falling back to highest legal level %d",
+                        desired_level,
+                        sec_name,
+                        beat_in_bar,
+                        boundary_level,
+                    )
+            else:
+                boundary_level = base_lvl
 
         role_ids: tuple[int, ...]
         if is_start or boundary_level > 0:
@@ -606,6 +731,8 @@ def _build_endpoint_distribution(
                                 section=sec,
                                 vocabularies=vocabularies,
                                 weights=run_config.prior_weights,
+                                target_tension=target_tension,
+                                edo=resolved_edo,
                             )
                             score += (
                                 run_config.plan_config.start_anchor_weight
@@ -640,9 +767,12 @@ def generate_start_endpoint_distribution(
     *,
     vocabularies: Optional[Vocabularies] = None,
     sections: Optional[Sequence[PlanningSection]] = None,
+    timeline: Optional[SectionTimeline] = None,
+    edo: Optional[int] = None,
 ) -> EndpointDistribution:
+    resolved_edo = run_config.edo if edo is None else edo
     resolved_vocabs = _resolved_vocabs(
-        vocabularies, run_config.style_config, run_config.edo
+        vocabularies, run_config.style_config, resolved_edo
     )
     beat_positions = {meter_id: 0 for meter_id in _meter_ids(run_config.style_config, resolved_vocabs)}
     return _build_endpoint_distribution(
@@ -652,6 +782,8 @@ def generate_start_endpoint_distribution(
         run_config=run_config,
         vocabularies=resolved_vocabs,
         sections=sections,
+        timeline=timeline,
+        edo=resolved_edo,
     )
 
 
@@ -660,9 +792,12 @@ def generate_end_endpoint_distribution(
     *,
     vocabularies: Optional[Vocabularies] = None,
     sections: Optional[Sequence[PlanningSection]] = None,
+    timeline: Optional[SectionTimeline] = None,
+    edo: Optional[int] = None,
 ) -> EndpointDistribution:
+    resolved_edo = run_config.edo if edo is None else edo
     resolved_vocabs = _resolved_vocabs(
-        vocabularies, run_config.style_config, run_config.edo
+        vocabularies, run_config.style_config, resolved_edo
     )
     beat_positions = {}
     for meter_id in _meter_ids(run_config.style_config, resolved_vocabs):
@@ -675,6 +810,8 @@ def generate_end_endpoint_distribution(
         run_config=run_config,
         vocabularies=resolved_vocabs,
         sections=sections,
+        timeline=timeline,
+        edo=resolved_edo,
     )
 
 
@@ -684,15 +821,45 @@ def generate_method_a_endpoints(
     vocabularies: Optional[Vocabularies] = None,
     key: RNGKey,
     sample_endpoints: bool = False,
+    sections: Optional[Sequence[PlanningSection]] = None,
+    timeline: Optional[SectionTimeline] = None,
+    edo: Optional[int] = None,
 ) -> tuple[MethodAEndpoints, RNGKey]:
     if not isinstance(key, RNGKey):
         raise TypeError("key must be an RNGKey.")
+    resolved_edo = run_config.edo if edo is None else edo
     resolved_vocabs = _resolved_vocabs(
-        vocabularies, run_config.style_config, run_config.edo
+        vocabularies, run_config.style_config, resolved_edo
     )
-    sections = build_section_plan(run_config)
-    pi0 = generate_start_endpoint_distribution(run_config, vocabularies=resolved_vocabs, sections=sections)
-    piT = generate_end_endpoint_distribution(run_config, vocabularies=resolved_vocabs, sections=sections)
+    resolved_sections = (
+        tuple(sections)
+        if sections is not None
+        else (run_config.sections if run_config.sections is not None else build_section_plan(run_config))
+    )
+    resolved_timeline = (
+        timeline
+        if timeline is not None
+        else SectionTimeline(
+            resolved_sections,
+            total_beats=run_config.total_beats,
+            edo=resolved_edo,
+            multi_meter=len(run_config.style_config.allowed_meters) > 1,
+        )
+    )
+    pi0 = generate_start_endpoint_distribution(
+        run_config,
+        vocabularies=resolved_vocabs,
+        sections=resolved_sections,
+        timeline=resolved_timeline,
+        edo=resolved_edo,
+    )
+    piT = generate_end_endpoint_distribution(
+        run_config,
+        vocabularies=resolved_vocabs,
+        sections=resolved_sections,
+        timeline=resolved_timeline,
+        edo=resolved_edo,
+    )
     start_choice, next_key = _choose_endpoint_state(
         pi0,
         key=key,
@@ -708,7 +875,7 @@ def generate_method_a_endpoints(
         piT=piT,
         start_choice=start_choice,
         end_choice=end_choice,
-        sections=sections,
+        sections=resolved_sections,
     ), next_key
 
 
@@ -735,11 +902,25 @@ def run_method_a(
         "decoder.comping", "decoder.bass", "decoder.lead", "decoder.drums",
     )
     streams, next_key = allocate_named_keys(key, stream_ids)
+    resolved_sections = (
+        run_config.sections
+        if run_config.sections is not None
+        else build_section_plan(run_config)
+    )
+    timeline = SectionTimeline(
+        sections=resolved_sections,
+        total_beats=run_config.total_beats,
+        edo=run_config.edo,
+        multi_meter=len(run_config.style_config.allowed_meters) > 1,
+    )
     endpoints, _ = generate_method_a_endpoints(
         run_config,
         vocabularies=resolved_vocabs,
         key=streams["endpoint_choice"],
         sample_endpoints=run_config.use_sampling,
+        sections=resolved_sections,
+        timeline=timeline,
+        edo=run_config.edo,
     )
     _logger.info(f"Endpoints: start={endpoints.start_choice.state} end={endpoints.end_choice.state}")
     start_endpoint = _singleton_endpoint_distribution(
@@ -749,12 +930,6 @@ def run_method_a(
     end_endpoint = _singleton_endpoint_distribution(
         endpoints.end_choice.state,
         time_index=run_config.total_beats,
-    )
-    timeline = SectionTimeline(
-        sections=endpoints.sections,
-        total_beats=run_config.total_beats,
-        edo=run_config.edo,
-        multi_meter=len(run_config.style_config.allowed_meters) > 1,
     )
     graph, _ = build_sparse_graph(
         start_layer=start_endpoint.layer,
