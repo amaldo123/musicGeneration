@@ -290,11 +290,10 @@ class SectionTimeline:
         length = sec.end_time - sec.start_time
         return interpolate_arc(sec.target_tension_arc, offset, length)
 
-    def edge_view(self, t: int) -> EdgeSectionView:
-        """Return section view for edge t, scoring arrival state k = t + 1."""
-        if not isinstance(t, int) or isinstance(t, bool):
-            raise TypeError("Edge time index t must be an int.")
-        k = t + 1
+    def state_view(self, k: int) -> EdgeSectionView:
+        """Return section view for beat state index k."""
+        if not isinstance(k, int) or isinstance(k, bool):
+            raise TypeError("State index k must be an int.")
         sec = self.at_state(k)
         idx = self.section_index(k)
         offset = self.offset_in_section(k)
@@ -309,6 +308,12 @@ class SectionTimeline:
             arrival_time=k,
             multi_meter=self.multi_meter,
         )
+
+    def edge_view(self, t: int) -> EdgeSectionView:
+        """Return section view for edge t, scoring arrival state k = t + 1."""
+        if not isinstance(t, int) or isinstance(t, bool):
+            raise TypeError("Edge time index t must be an int.")
+        return self.state_view(t + 1)
 
     def as_curve(self) -> List[Tuple[int, float]]:
         """Return full (k, target_tension) curve for k in 0..total_beats."""

@@ -159,7 +159,6 @@ class TestReq04Defects(unittest.TestCase):
         # Desired: target tension for edge arriving at beat 1 should equal target tension at beat 1
         self.assertAlmostEqual(d0_target, target_at_beat_1, places=4)
 
-    @unittest.expectedFailure
     def test_F4_target_density_changes_decoded_note_count(self) -> None:
         """F4: Distinct section target_density values must change the decoded note event count."""
         run_res = run_fixture(

@@ -345,6 +345,10 @@ class DecodeConfig:
     bass_density: float = 0.60
     comping_density: float = 0.55
     lead_density: float = 0.45
+    # Target density scaling baseline: effective_density = base * target / reference.
+    reference_density: float = 0.5
+    # Blend between local tension expression and target tension expression in [0, 1].
+    target_expression_blend: float = 0.0
     bass_register: RegisterRange = (28, 52)
     comping_register: RegisterRange = (45, 72)
     lead_register: RegisterRange = (60, 88)
@@ -367,6 +371,12 @@ class DecodeConfig:
             _require_real(name, value, minimum=0.0)
             if value > 1.0:
                 raise ValueError(f"{name} must be <= 1.0.")
+        _require_real("reference_density", self.reference_density, minimum=0.0)
+        if self.reference_density <= 0.0 or self.reference_density > 1.0:
+            raise ValueError("reference_density must be in (0, 1].")
+        _require_real("target_expression_blend", self.target_expression_blend, minimum=0.0)
+        if self.target_expression_blend > 1.0:
+            raise ValueError("target_expression_blend must be in [0, 1].")
         object.__setattr__(
             self, "bass_register", _coerce_register_range("bass_register", self.bass_register)
         )
