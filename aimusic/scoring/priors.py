@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from math import isfinite
 from pathlib import Path
-from typing import Mapping, Optional, Protocol, Sequence, Tuple, cast, runtime_checkable
+from typing import Any, Mapping, Optional, Protocol, Sequence, Tuple, cast, runtime_checkable
 
 from aimusic.core.config import (
     NeuralPriorConfig,
@@ -32,6 +32,8 @@ STRUCTURAL_STREAM_NAMES: Tuple[str, ...] = (
     "head",
     "groove",
 )
+
+SUPPORTED_STREAM_NAMES: Tuple[str, ...] = STRUCTURAL_STREAM_NAMES + ("section",)
 
 
 MetadataPairs = Tuple[Tuple[str, str], ...]
@@ -91,11 +93,102 @@ def _coerce_token_streams(streams: Sequence[str]) -> Tuple[str, ...]:
         raise ValueError("token_streams must not be empty.")
     for idx, stream in enumerate(items):
         _require_non_empty_str(f"token_streams[{idx}]", stream)
-        if stream not in STRUCTURAL_STREAM_NAMES:
+        if stream not in SUPPORTED_STREAM_NAMES:
             raise ValueError(f"Unsupported token stream: {stream!r}")
     if len(items) != len(set(items)):
         raise ValueError("token_streams must not contain duplicates.")
     return items
+
+
+@dataclass(frozen=True)
+class SectionTokens:
+    """Factorized section context tokens derived from an EdgeSectionView.
+
+    Encapsulates timeline and section guidance for transition queries,
+    following the arrival-state convention where edge t scores arrival state t + 1.
+    """
+
+    section_index: int
+    section_name: str
+    offset_in_section: int
+    section_length: int
+    is_section_start: bool
+    target_tension: float
+    groove_family: Optional[str] = None
+    allowed_meters: Tuple[str, ...] = ()
+    key_region: Optional[Tuple[int, ...]] = None
+
+    def __post_init__(self) -> None:
+        _require_int("section_index", self.section_index, minimum=0)
+        _require_non_empty_str("section_name", self.section_name)
+        _require_int("offset_in_section", self.offset_in_section, minimum=0)
+        _require_int("section_length", self.section_length, minimum=1)
+        if not isinstance(self.is_section_start, bool):
+            raise TypeError("is_section_start must be a bool.")
+        _require_real("target_tension", self.target_tension)
+        if self.target_tension < 0.0 or self.target_tension > 1.0:
+            raise ValueError("target_tension must be in [0, 1].")
+        if self.groove_family is not None:
+            _require_non_empty_str("groove_family", self.groove_family)
+        if self.allowed_meters is not None:
+            meters = tuple(self.allowed_meters)
+            for idx, m in enumerate(meters):
+                _require_non_empty_str(f"allowed_meters[{idx}]", m)
+            object.__setattr__(self, "allowed_meters", meters)
+        else:
+            object.__setattr__(self, "allowed_meters", ())
+        if self.key_region is not None:
+            kr = tuple(self.key_region)
+            for idx, k in enumerate(kr):
+                _require_int(f"key_region[{idx}]", k, minimum=0)
+            object.__setattr__(self, "key_region", kr)
+
+    @classmethod
+    def from_section_view(cls, view: EdgeSectionView) -> "SectionTokens":
+        if not isinstance(view, EdgeSectionView):
+            raise TypeError("view must be an EdgeSectionView.")
+        sec = view.section
+        sec_len = sec.end_time - sec.start_time
+        return cls(
+            section_index=view.section_index,
+            section_name=sec.name,
+            offset_in_section=view.offset_in_section,
+            section_length=sec_len,
+            is_section_start=view.is_section_start,
+            target_tension=float(view.target_tension),
+            groove_family=sec.groove_family,
+            allowed_meters=tuple(sec.allowed_meters) if sec.allowed_meters is not None else (),
+            key_region=tuple(sec.key_region) if sec.key_region is not None else None,
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "section_index": self.section_index,
+            "section_name": self.section_name,
+            "offset_in_section": self.offset_in_section,
+            "section_length": self.section_length,
+            "is_section_start": self.is_section_start,
+            "target_tension": float(self.target_tension),
+            "groove_family": self.groove_family,
+            "allowed_meters": list(self.allowed_meters),
+            "key_region": list(self.key_region) if self.key_region is not None else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SectionTokens":
+        allowed = data.get("allowed_meters")
+        key_reg = data.get("key_region")
+        return cls(
+            section_index=int(data["section_index"]),
+            section_name=str(data["section_name"]),
+            offset_in_section=int(data["offset_in_section"]),
+            section_length=int(data["section_length"]),
+            is_section_start=bool(data["is_section_start"]),
+            target_tension=float(data["target_tension"]),
+            groove_family=str(data["groove_family"]) if data.get("groove_family") is not None else None,
+            allowed_meters=tuple(str(m) for m in allowed) if allowed is not None else (),
+            key_region=tuple(int(k) for k in key_reg) if key_reg is not None else None,
+        )
 
 
 @dataclass(frozen=True)
@@ -334,6 +427,14 @@ class PriorContext:
     def target_tension(self) -> Optional[float]:
         return self.section_view.target_tension if self.section_view is not None else None
 
+    @property
+    def section_tokens(self) -> Optional[SectionTokens]:
+        return (
+            SectionTokens.from_section_view(self.section_view)
+            if self.section_view is not None
+            else None
+        )
+
     def to_dict(self) -> dict[str, object]:
         assert self.history_tokens is not None
         assert self.future_hint_tokens is not None
@@ -382,6 +483,7 @@ class TokenizedPriorQuery:
     history_tokens: StructuralTokenSequence = field(default_factory=StructuralTokenSequence)
     future_hint_tokens: StructuralTokenSequence = field(default_factory=StructuralTokenSequence)
     section_name: Optional[str] = None
+    section_tokens: Optional[SectionTokens] = None
     metadata: MetadataPairs = ()
     factorization_mode: PriorFactorization = PriorFactorization.FACTORIZED
 
@@ -397,6 +499,8 @@ class TokenizedPriorQuery:
             raise TypeError("future_hint_tokens must be a StructuralTokenSequence.")
         if self.section_name is not None:
             _require_non_empty_str("section_name", self.section_name)
+        if self.section_tokens is not None and not isinstance(self.section_tokens, SectionTokens):
+            raise TypeError("section_tokens must be a SectionTokens or None.")
         metadata = _coerce_metadata("metadata", self.metadata)
         object.__setattr__(self, "metadata", metadata)
         if not isinstance(self.factorization_mode, PriorFactorization):
@@ -414,6 +518,11 @@ class TokenizedPriorQuery:
         context = query.context or PriorContext()
         assert context.history_tokens is not None
         assert context.future_hint_tokens is not None
+        section_tokens = (
+            SectionTokens.from_section_view(context.section_view)
+            if context.section_view is not None
+            else None
+        )
         return cls(
             prev_event=StructuralEventTokens.from_state(query.prev_state),
             next_event=StructuralEventTokens.from_state(query.next_state),
@@ -421,6 +530,7 @@ class TokenizedPriorQuery:
             history_tokens=context.history_tokens,
             future_hint_tokens=context.future_hint_tokens,
             section_name=context.section_name,
+            section_tokens=section_tokens,
             metadata=context.metadata,
             factorization_mode=factorization_mode,
         )
@@ -434,6 +544,7 @@ class TokenizedPriorQuery:
             "history_tokens": self.history_tokens.to_dict(),
             "future_hint_tokens": self.future_hint_tokens.to_dict(),
             "section_name": self.section_name,
+            "section_tokens": self.section_tokens.to_dict() if self.section_tokens is not None else None,
             "metadata": list(self.metadata),
         }
 
@@ -483,7 +594,7 @@ class BatchedNeuralPriorModel(NeuralPriorModel, Protocol):
 class NeuralPriorManifest:
     """Serializable artifact manifest for an external neural prior bundle."""
 
-    manifest_version: int = 1
+    manifest_version: int = 2
     model_family: str = "external_neural_prior"
     model_version: str = "placeholder-v1"
     factorization_mode: PriorFactorization = PriorFactorization.FACTORIZED
@@ -580,7 +691,11 @@ def load_neural_prior_manifest(path: str) -> NeuralPriorManifest:
 
 @dataclass(frozen=True)
 class NullPrior:
-    """Algorithmic-only prior that contributes a constant neutral log-probability."""
+    """Algorithmic-only prior that contributes a constant neutral log-probability.
+
+    Note: This prior contributes a static neutral log-probability and does not consume
+    or use SectionTokens or section context to influence its output.
+    """
 
     neutral_logp: float = 0.0
 
@@ -603,7 +718,13 @@ class NullPrior:
 
 @dataclass(frozen=True)
 class NeuralPrior:
-    """Wrapper around an external neural prior or a deterministic placeholder."""
+    """Wrapper around an external neural prior or a deterministic placeholder.
+
+    Note: The built-in deterministic placeholder mode does not consume or use
+    SectionTokens to alter scoring behavior, preserving baseline transitions. External
+    models supplied via the `model` argument receive full TokenizedPriorQuery objects
+    and may consume section_tokens if supported.
+    """
 
     config: NeuralPriorConfig = field(default_factory=NeuralPriorConfig)
     manifest: Optional[NeuralPriorManifest] = None
@@ -624,6 +745,11 @@ class NeuralPrior:
             raise TypeError("model must satisfy the NeuralPriorModel protocol.")
 
     def _score_placeholder(self, query: TokenizedPriorQuery) -> float:
+        """Deterministic placeholder scoring based on factorized token agreements.
+
+        Note: Section tokens (query.section_tokens) are explicitly ignored by this
+        placeholder to preserve existing graph weights and baseline transitions.
+        """
         assert self.manifest is not None
         score = float(self.config.default_logp)
         if self.config.placeholder_mode is PlaceholderPriorMode.NEUTRAL:
