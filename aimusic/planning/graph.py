@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Mapping, Optional, Sequence, Tuple, Union
 if TYPE_CHECKING:
     from aimusic.planning.sections import EdgeSectionView, PlanningSection, SectionTimeline
@@ -732,7 +732,6 @@ def build_sparse_graph(
         legal_candidate_count = 0
         scored_candidate_count = 0
 
-        source_section = resolved_timeline.at_state(current_time) if resolved_timeline is not None else None
         for source_state in current_layer.states:
             if final_step:
                 candidate_result = _candidate_result_for_target_layer(
@@ -762,7 +761,7 @@ def build_sparse_graph(
                     d_max=d_max,
                     proposal_budget=resolved_proposal_budget,
                     prior_guided_proposals=resolved_prior_guided_proposals,
-                    section=source_section,
+                    section_view=edge_sec_view,
                     section_guided_proposals=resolved_section_guided_proposals,
                 )
 
@@ -792,11 +791,24 @@ def build_sparse_graph(
             # Skip the batch call entirely when there is nothing to score --
             # a source with zero surviving candidates should never trigger a
             # wasteful zero-item call into the (possibly expensive) prior.
+            pass1_weights = weights
+            if not resolved_section_guided_proposals and weights is not None:
+                pass1_weights = replace(
+                    weights,
+                    lambda_target_tension=0.0,
+                    style_weights=replace(
+                        weights.style_weights,
+                        groove_family=0.0,
+                        role=0.0,
+                        key_region=0.0,
+                    ),
+                )
+
             log_weights: Tuple[float, ...] = (
                 calculate_transition_log_weights(
                     queries,
                     prior=resolved_prior,
-                    weights=weights,
+                    weights=pass1_weights,
                     vocabularies=resolved_vocabs,
                     edo=resolved_edo,
                 )
@@ -828,6 +840,16 @@ def build_sparse_graph(
             if len(source_edges) > resolved_sb.d_max:
                 outdegree_pruned_count += len(source_edges) - resolved_sb.d_max
             trimmed_edges = source_edges[: resolved_sb.d_max]
+            if (
+                edge_sec_view is not None
+                and edge_sec_view.is_section_start
+                and getattr(edge_sec_view.section, "boundary_level", 0) > 0
+            ):
+                target_bnd = edge_sec_view.section.boundary_level
+                if not any(e.target.boundary_lvl == target_bnd for e in trimmed_edges):
+                    matching = [e for e in source_edges if e.target.boundary_lvl == target_bnd]
+                    if matching and trimmed_edges:
+                        trimmed_edges = trimmed_edges[:-1] + [matching[0]]
             kept_edges.extend(trimmed_edges)
             for edge in trimmed_edges:
                 if edge.target not in best_incoming or edge.log_weight > best_incoming[edge.target]:
@@ -868,6 +890,16 @@ def build_sparse_graph(
                     ),
                 )
                 kept_states = tuple(ranked_candidates[: resolved_sb.k_max])
+                if (
+                    edge_sec_view is not None
+                    and edge_sec_view.is_section_start
+                    and getattr(edge_sec_view.section, "boundary_level", 0) > 0
+                ):
+                    target_bnd = edge_sec_view.section.boundary_level
+                    if not any(s.boundary_lvl == target_bnd for s in kept_states):
+                        matching_states = [s for s in ranked_candidates if s.boundary_lvl == target_bnd]
+                        if matching_states and kept_states:
+                            kept_states = kept_states[:-1] + (matching_states[0],)
                 kept_state_set = set(kept_states)
                 for state in ranked_candidates[resolved_sb.k_max :]:
                     pruned_states.append(

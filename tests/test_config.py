@@ -66,7 +66,7 @@ class TestSectionStyleWeights(unittest.TestCase):
         self.assertEqual(w.key_region, 0.5)
         self.assertEqual(w.groove_family, 0.3)
         self.assertEqual(w.role, 0.2)
-        self.assertEqual(w.boundary, 0.6)
+        self.assertEqual(w.boundary, 1.5)
         self.assertEqual(w.start_alignment, 1.0)
 
     def test_custom_and_frozen(self):
@@ -212,6 +212,14 @@ class TestPlanConfig(unittest.TestCase):
             PlanConfig(sectioning_strategy=SectioningStrategy.SECTION_WISE)
         with self.assertRaises(TypeError):
             PlanConfig(method="method_a")  # type: ignore[arg-type]
+
+    def test_plan_config_section_guided_proposals(self):
+        cfg_default = PlanConfig()
+        self.assertFalse(cfg_default.section_guided_proposals)
+        cfg_steered = PlanConfig(section_guided_proposals=True)
+        self.assertTrue(cfg_steered.section_guided_proposals)
+        with self.assertRaises(TypeError):
+            PlanConfig(section_guided_proposals="invalid")  # type: ignore[arg-type]
 
 
 class TestConfigImmutability(unittest.TestCase):

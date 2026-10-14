@@ -770,6 +770,10 @@ def run_method_a(
         d_max=resolved_sb.d_max,
         sections=endpoints.sections,
         timeline=timeline,
+        section_guided_proposals=(
+            run_config.plan_config.section_guided_proposals
+            or resolved_sb.section_guided_proposals
+        ),
     )
     _logger.info(f"Graph built: {len(graph.layers)} layers, {sum(len(l.states) for l in graph.layers)} states")
     aligned_endpoints = MethodAEndpoints(

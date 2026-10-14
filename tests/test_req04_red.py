@@ -87,7 +87,6 @@ class TestReq04Defects(unittest.TestCase):
         # Desired: Edge weights after rescoring must reflect lambda_target_tension
         self.assertNotEqual(weights_20, weights_0)
 
-    @unittest.expectedFailure
     def test_F2_section_start_state_carries_section_boundary_level(self) -> None:
         """F2: The arrival state at a section start beat must carry that section's boundary level."""
         # Case A: Section A [0,8) level 2, Section B [8,16) level 3
@@ -238,7 +237,6 @@ class TestReq04Defects(unittest.TestCase):
         # Desired: total_log_weight must exactly equal sum of components
         self.assertAlmostEqual(observed_total, expected_total, delta=1e-9)
 
-    @unittest.expectedFailure
     def test_F7_style_weight_zero_does_not_change_candidate_pool(self) -> None:
         """F7: Changing lambda_section_style must not alter candidate proposal pool when steering is not requested."""
         start_state = BeatState(0, 0, 3, 0, 0, 0, 1, 0)

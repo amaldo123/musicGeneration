@@ -192,7 +192,7 @@ class SectionStyleWeights:
     key_region: float = 0.5
     groove_family: float = 0.3
     role: float = 0.2
-    boundary: float = 0.6
+    boundary: float = 1.5
     start_alignment: float = 1.0
 
     def __post_init__(self) -> None:
@@ -407,6 +407,7 @@ class PlanConfig:
     start_anchor_weight: float = 1.0
     end_anchor_weight: float = 1.0
     section_names: Tuple[str, ...] = ()
+    section_guided_proposals: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.method, PlanMethod):
@@ -423,6 +424,8 @@ class PlanConfig:
         _require_real("end_anchor_weight", self.end_anchor_weight, minimum=0.0)
         if self.start_anchor_weight == 0.0 and self.end_anchor_weight == 0.0:
             raise ValueError("At least one endpoint anchor weight must be > 0.")
+        if not isinstance(self.section_guided_proposals, bool):
+            raise TypeError("section_guided_proposals must be a bool.")
 
         section_names = tuple(self.section_names)
         if any(not isinstance(name, str) or not name.strip() for name in section_names):
