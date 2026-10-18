@@ -32,7 +32,6 @@ from tests.req04_support.fixtures import (
     SEEDS,
     THREE_SECTION_24,
     TWO_SECTION_16,
-    run_fixture,
 )
 
 

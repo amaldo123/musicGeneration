@@ -837,7 +837,8 @@ def get_valid_next_states(
         has_target_bnd = any(c.boundary_lvl == target_bnd for c in accepted)
         if not has_target_bnd:
             fallback_candidate = None
-            for m_id in propose_meter_ids(prev_state, resolved_style, resolved_vocabs, section=sec):
+            sec_arg = sec if section_guided_proposals else None
+            for m_id in propose_meter_ids(prev_state, resolved_style, resolved_vocabs, section=sec_arg):
                 b_in_bar = _next_beat_index(prev_state, m_id, resolved_vocabs)
                 avail_bnds = propose_boundary_levels(
                     prev_state,
@@ -852,13 +853,13 @@ def get_valid_next_states(
                 if target_bnd not in avail_bnds:
                     continue
                 for r_id in propose_role_ids(
-                    prev_state, m_id, b_in_bar, target_bnd, resolved_vocabs, section=sec
+                    prev_state, m_id, b_in_bar, target_bnd, resolved_vocabs, section=sec_arg
                 ):
                     for g_id in propose_groove_ids(
-                        prev_state, target_bnd, r_id, resolved_vocabs, section=sec
+                        prev_state, target_bnd, r_id, resolved_vocabs, section=sec_arg
                     ):
                         for k_id in propose_key_ids(
-                            prev_state, target_bnd, r_id, resolved_vocabs, edo=resolved_edo, section=sec
+                            prev_state, target_bnd, r_id, resolved_vocabs, edo=resolved_edo, section=sec_arg
                         ):
                             for c_id in propose_chord_ids(
                                 prev_state, k_id, m_id, b_in_bar, target_bnd,

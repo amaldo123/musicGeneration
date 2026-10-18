@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -179,23 +179,252 @@ class MethodAEndpoints:
     sections: Tuple[PlanningSection, ...]
 
 
+def _parse_beat_state(val: Any) -> BeatState:
+    if isinstance(val, BeatState):
+        return val
+    if isinstance(val, dict):
+        return BeatState(
+            meter_id=int(val["meter_id"]),
+            beat_in_bar=int(val["beat_in_bar"]),
+            boundary_lvl=int(val["boundary_lvl"]),
+            key_id=int(val["key_id"]),
+            chord_id=int(val["chord_id"]),
+            role_id=int(val["role_id"]),
+            head_id=int(val["head_id"]),
+            groove_id=int(val["groove_id"]),
+        )
+    raise TypeError(f"Cannot parse BeatState from {val!r}")
+
+
 @dataclass(frozen=True)
 class TransitionDiagnostic:
     """Per-transition diagnostic metrics for a selected path."""
 
     time_index: int
+    arrival_time: int
+    section_name: str
+    section_index: int
+    is_section_start: bool
     source_state: BeatState
     target_state: BeatState
     data_logp: float
-    gttm_energy: float
-    gttm_family_breakdown: Dict[str, float]
+    data_contribution: float
+    gttm_raw_features: Mapping[str, float]
+    gttm_weighted_features: Mapping[str, float]
+    gttm_family_breakdown: Mapping[str, float]
+    gttm_contribution: float
     target_tension: float
     realized_tension: float
     tension_deviation: float
-    target_tension_penalty: float
-    section_style_penalty: float
-    section_style_breakdown: Dict[str, float]
-    total_log_weight: float
+    target_tension_energy: float
+    target_tension_contribution: float
+    section_style_components: Mapping[str, float]
+    section_style_energy: float
+    section_style_contribution: float
+    final_log_weight: float
+    right_context_states: Tuple[BeatState, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require_int("time_index", self.time_index, minimum=0)
+        _require_int("arrival_time", self.arrival_time, minimum=0)
+        if not isinstance(self.section_name, str) or not self.section_name.strip():
+            raise ValueError("section_name must be a non-empty string.")
+        _require_int("section_index", self.section_index, minimum=0)
+        if not isinstance(self.is_section_start, bool):
+            raise TypeError("is_section_start must be a bool.")
+        if not isinstance(self.source_state, BeatState):
+            raise TypeError("source_state must be a BeatState.")
+        if not isinstance(self.target_state, BeatState):
+            raise TypeError("target_state must be a BeatState.")
+        for name in (
+            "data_logp",
+            "data_contribution",
+            "gttm_contribution",
+            "target_tension",
+            "realized_tension",
+            "tension_deviation",
+            "target_tension_energy",
+            "target_tension_contribution",
+            "section_style_energy",
+            "section_style_contribution",
+            "final_log_weight",
+        ):
+            val = getattr(self, name)
+            if not isinstance(val, (int, float)) or isinstance(val, bool) or not np.isfinite(val):
+                raise ValueError(f"{name} must be a finite real number, got {val!r}")
+        if not isinstance(self.gttm_raw_features, (dict, Mapping)):
+            raise TypeError("gttm_raw_features must be a Mapping.")
+        if not isinstance(self.gttm_weighted_features, (dict, Mapping)):
+            raise TypeError("gttm_weighted_features must be a Mapping.")
+        if not isinstance(self.gttm_family_breakdown, (dict, Mapping)):
+            raise TypeError("gttm_family_breakdown must be a Mapping.")
+        if not isinstance(self.section_style_components, (dict, Mapping)):
+            raise TypeError("section_style_components must be a Mapping.")
+        if not isinstance(self.right_context_states, tuple):
+            object.__setattr__(self, "right_context_states", tuple(self.right_context_states))
+        for state in self.right_context_states:
+            if not isinstance(state, BeatState):
+                raise TypeError("All items in right_context_states must be BeatState instances.")
+
+    def verify_decomposition(self, tol: float = 1e-9) -> bool:
+        """Check that final_log_weight equals data + gttm - tension - style contributions within tol."""
+        if not isinstance(tol, (int, float)) or tol <= 0.0 or not np.isfinite(tol):
+            raise ValueError(f"Tolerance tol must be a positive finite real number, got {tol!r}")
+        expected = (
+            self.data_contribution
+            + self.gttm_contribution
+            - self.target_tension_contribution
+            - self.section_style_contribution
+        )
+        diff = abs(self.final_log_weight - expected)
+        if diff > tol:
+            raise ValueError(
+                f"Transition {self.time_index} (arrival beat {self.arrival_time}, section '{self.section_name}') "
+                f"decomposition failure: final_log_weight={self.final_log_weight:.10f} != "
+                f"sum_of_contributions={expected:.10f} (diff={diff:.2e} > tol={tol:.2e}). "
+                f"Components: data_contribution={self.data_contribution:.6f}, "
+                f"gttm_contribution={self.gttm_contribution:.6f}, "
+                f"-target_tension_contribution={-self.target_tension_contribution:.6f}, "
+                f"-section_style_contribution={-self.section_style_contribution:.6f}"
+            )
+        return True
+
+    def to_dict(self, vocabularies: Optional[Vocabularies] = None) -> Dict[str, Any]:
+        """Serialize transition diagnostic record to JSON-compatible dictionary."""
+        return {
+            "time_index": self.time_index,
+            "arrival_time": self.arrival_time,
+            "section_name": self.section_name,
+            "section_index": self.section_index,
+            "is_section_start": self.is_section_start,
+            "source_state": self.source_state.to_dict(vocabularies),
+            "target_state": self.target_state.to_dict(vocabularies),
+            "data_logp": self.data_logp,
+            "data_contribution": self.data_contribution,
+            "gttm_raw_features": dict(self.gttm_raw_features),
+            "gttm_weighted_features": dict(self.gttm_weighted_features),
+            "gttm_family_breakdown": dict(self.gttm_family_breakdown),
+            "gttm_contribution": self.gttm_contribution,
+            "target_tension": self.target_tension,
+            "realized_tension": self.realized_tension,
+            "tension_deviation": self.tension_deviation,
+            "target_tension_energy": self.target_tension_energy,
+            "target_tension_contribution": self.target_tension_contribution,
+            "section_style_components": dict(self.section_style_components),
+            "section_style_energy": self.section_style_energy,
+            "section_style_contribution": self.section_style_contribution,
+            "final_log_weight": self.final_log_weight,
+            "right_context_states": [s.to_dict(vocabularies) for s in self.right_context_states],
+            # Legacy fields for backward compatibility
+            "gttm_energy": self.gttm_energy,
+            "target_tension_penalty": self.target_tension_contribution,
+            "section_style_penalty": self.section_style_contribution,
+            "section_style_breakdown": dict(self.section_style_components),
+            "total_log_weight": self.final_log_weight,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "TransitionDiagnostic":
+        """Deserialize transition diagnostic record, supporting new and legacy schemas."""
+        t = int(data["time_index"])
+        arrival_time = int(data.get("arrival_time", t + 1))
+        section_name = str(data.get("section_name", "A"))
+        section_index = int(data.get("section_index", 0))
+        is_section_start = bool(data.get("is_section_start", False))
+        source_state = _parse_beat_state(data["source_state"])
+        target_state = _parse_beat_state(data["target_state"])
+
+        data_logp = float(data.get("data_logp", 0.0))
+        data_contribution = float(data.get("data_contribution", data_logp))
+
+        gttm_raw = dict(data.get("gttm_raw_features", {}))
+        gttm_weighted = dict(data.get("gttm_weighted_features", {}))
+        gttm_family = dict(data.get("gttm_family_breakdown", {}))
+
+        if "gttm_contribution" in data:
+            gttm_contribution = float(data["gttm_contribution"])
+        elif "gttm_energy" in data:
+            gttm_contribution = -float(data["gttm_energy"])
+        elif gttm_weighted:
+            gttm_contribution = float(sum(gttm_weighted.values()))
+        else:
+            gttm_contribution = 0.0
+
+        target_tension = float(data.get("target_tension", 0.0))
+        realized_tension = float(data.get("realized_tension", 0.0))
+        tension_deviation = float(data.get("tension_deviation", realized_tension - target_tension))
+
+        if "target_tension_contribution" in data:
+            t_contrib = float(data["target_tension_contribution"])
+            t_energy = float(data.get("target_tension_energy", t_contrib))
+        else:
+            t_contrib = float(data.get("target_tension_penalty", 0.0))
+            t_energy = float(data.get("target_tension_energy", t_contrib))
+
+        if "section_style_contribution" in data:
+            s_contrib = float(data["section_style_contribution"])
+            s_energy = float(data.get("section_style_energy", s_contrib))
+        else:
+            s_contrib = float(data.get("section_style_penalty", 0.0))
+            s_energy = float(data.get("section_style_energy", s_contrib))
+
+        style_components = dict(data.get("section_style_components", data.get("section_style_breakdown", {})))
+
+        if "final_log_weight" in data:
+            final_log_weight = float(data["final_log_weight"])
+        elif "total_log_weight" in data:
+            final_log_weight = float(data["total_log_weight"])
+        else:
+            final_log_weight = float(data_contribution + gttm_contribution - t_contrib - s_contrib)
+
+        right_contexts_raw = data.get("right_context_states", ())
+        right_contexts = tuple(_parse_beat_state(s) for s in right_contexts_raw)
+
+        return cls(
+            time_index=t,
+            arrival_time=arrival_time,
+            section_name=section_name,
+            section_index=section_index,
+            is_section_start=is_section_start,
+            source_state=source_state,
+            target_state=target_state,
+            data_logp=data_logp,
+            data_contribution=data_contribution,
+            gttm_raw_features=gttm_raw,
+            gttm_weighted_features=gttm_weighted,
+            gttm_family_breakdown=gttm_family,
+            gttm_contribution=gttm_contribution,
+            target_tension=target_tension,
+            realized_tension=realized_tension,
+            tension_deviation=tension_deviation,
+            target_tension_energy=t_energy,
+            target_tension_contribution=t_contrib,
+            section_style_components=style_components,
+            section_style_energy=s_energy,
+            section_style_contribution=s_contrib,
+            final_log_weight=final_log_weight,
+            right_context_states=right_contexts,
+        )
+
+    @property
+    def total_log_weight(self) -> float:
+        return self.final_log_weight
+
+    @property
+    def target_tension_penalty(self) -> float:
+        return self.target_tension_contribution
+
+    @property
+    def section_style_penalty(self) -> float:
+        return self.section_style_contribution
+
+    @property
+    def section_style_breakdown(self) -> Mapping[str, float]:
+        return self.section_style_components
+
+    @property
+    def gttm_energy(self) -> float:
+        return -float(sum(self.gttm_weighted_features.values())) if self.gttm_weighted_features else 0.0
 
 
 
@@ -658,20 +887,24 @@ def _build_endpoint_distribution(
         strong_beats = vocabularies.meters.token_for_id(meter_id).strong_beats
 
         if is_start:
-            desired_level = sec.boundary_level if sec is not None else 3
-            if _is_legal_boundary_level(desired_level, beat_in_bar, strong_beats):
-                boundary_level = desired_level
+            base_lvl = _endpoint_boundary_level(is_start=True, beat_in_bar=beat_in_bar, strong_beats=strong_beats)
+            if has_style_guidance and sec is not None and sw.boundary > 0.0:
+                desired_level = sec.boundary_level
+                if _is_legal_boundary_level(desired_level, beat_in_bar, strong_beats):
+                    boundary_level = desired_level
+                else:
+                    boundary_level = _highest_legal_boundary_level(beat_in_bar, strong_beats)
+                    sec_name = sec.name if sec is not None else "start"
+                    _logger.info(
+                        "Start endpoint boundary_level %d for section '%s' is illegal at beat_in_bar=%d; "
+                        "falling back to highest legal level %d",
+                        desired_level,
+                        sec_name,
+                        beat_in_bar,
+                        boundary_level,
+                    )
             else:
-                boundary_level = _highest_legal_boundary_level(beat_in_bar, strong_beats)
-                sec_name = sec.name if sec is not None else "start"
-                _logger.info(
-                    "Start endpoint boundary_level %d for section '%s' is illegal at beat_in_bar=%d; "
-                    "falling back to highest legal level %d",
-                    desired_level,
-                    sec_name,
-                    beat_in_bar,
-                    boundary_level,
-                )
+                boundary_level = base_lvl
         else:
             base_lvl = _endpoint_boundary_level(is_start=False, beat_in_bar=beat_in_bar, strong_beats=strong_beats)
             if has_style_guidance and sec is not None and sw.boundary > 0.0:
@@ -703,9 +936,15 @@ def _build_endpoint_distribution(
                 vocabularies.roles.token_for_label(r).id
                 for r in sec.preferred_roles
                 if r in vocabularies.roles.label_map
+                and not (not is_start and boundary_level >= 2 and r == "hold")
             ]
             if pref_roles:
                 role_ids = tuple(dict.fromkeys(pref_roles + list(role_ids)))
+        if not is_start and boundary_level >= 2 and hasattr(vocabularies, "roles") and vocabularies.roles:
+            hold_token = vocabularies.roles.label_map.get("hold")
+            if hold_token is not None:
+                role_ids = tuple(r for r in role_ids if r != hold_token.id)
+
 
         for key_id in key_ids:
             for quality in chord_qualities:
@@ -973,96 +1212,95 @@ def run_method_a(
         sampled_path = None
         _logger.info(f"MAP path: {len(path) - 1} beats")
 
-    from aimusic.scoring.gttm_features import calculate_gttm_energy, transition_family_scores
-    from aimusic.scoring.priors import PriorContext
-    from aimusic.scoring.tension import (
-        beat_tension,
-        section_style_breakdown,
-        section_style_energy,
-        target_tension_at_time,
-    )
+    from aimusic.scoring.gttm_features import FEATURE_REGISTRY
 
     trans_diags: list[TransitionDiagnostic] = []
-    prev_st: Optional[BeatState] = None
-    for idx, st in enumerate(path):
-        if idx > 0 and prev_st is not None:
-            t = idx - 1
-            t_tension = timeline.target_tension(idx) if timeline is not None else target_tension_at_time(endpoints.sections, idx)
-            r_tension = beat_tension(prev_st, st, resolved_vocabs, run_config.edo)
-            dev = r_tension - t_tension
-            sec = timeline.at_state(idx) if timeline is not None else get_section_at_time(endpoints.sections, idx)
-            from aimusic.scoring.tension import transition_target_tension_energy
-            t_energy = transition_target_tension_energy(
-                r_tension, t_tension, run_config.prior_weights.sigma_tension
+    for t in range(len(path) - 1):
+        source = path[t]
+        target = path[t + 1]
+
+        edge = None
+        if t < len(graph.edges_by_time):
+            for e in graph.edges_by_time[t]:
+                if e.source == source and e.target == target:
+                    edge = e
+                    break
+        if edge is None:
+            raise ValueError(
+                f"No matching edge in graph at time {t} for path transition {source} -> {target}"
             )
-            t_pen = run_config.prior_weights.lambda_target_tension * t_energy
-            is_start = timeline.is_section_start(idx) if timeline is not None else (idx == sec.start_time if sec else False)
-            is_multi = len(run_config.style_config.allowed_meters) > 1
-            s_pen = run_config.prior_weights.lambda_section_style * section_style_energy(
-                prev_st,
-                st,
-                sec,
-                resolved_vocabs,
-                run_config.edo,
-                style_weights=run_config.prior_weights.style_weights,
-                multi_meter=is_multi,
-                multi_meter_alignment_factor=run_config.prior_weights.multi_meter_alignment_factor,
-                is_section_start=is_start,
+
+        edge_diag = None
+        if graph.edge_diagnostics_by_time and t < len(graph.edge_diagnostics_by_time):
+            for item in graph.edge_diagnostics_by_time[t]:
+                if item.source == source and item.target == target:
+                    edge_diag = item
+                    break
+        if edge_diag is None:
+            raise ValueError(
+                f"No matching edge score breakdown in graph at time {t} for path transition {source} -> {target}"
             )
-            s_breakdown = section_style_breakdown(
-                prev_st,
-                st,
-                sec,
-                resolved_vocabs,
-                run_config.edo,
-                style_weights=run_config.prior_weights.style_weights,
-                is_section_start=is_start,
-            )
-            data_logp = (
-                prior.logp_next(
-                    prev_st,
-                    st,
-                    t,
-                    PriorContext(history=(prev_st,), section_name=sec.name if sec else None),
-                )
-                if prior is not None
-                else 0.0
-            )
-            gttm_e = calculate_gttm_energy(
-                prev_st,
-                st,
-                t,
-                vocabularies=resolved_vocabs,
-                edo=run_config.edo,
-                weights=run_config.prior_weights,
-            )
-            gttm_families = transition_family_scores(
-                prev_st, st, t, vocabularies=resolved_vocabs, edo=run_config.edo
-            )
-            edge_weight = 0.0
-            if t < len(graph.edges_by_time):
-                for e in graph.edges_by_time[t]:
-                    if e.source == prev_st and e.target == st:
-                        edge_weight = e.log_weight
-                        break
-            trans_diags.append(
-                TransitionDiagnostic(
-                    time_index=t,
-                    source_state=prev_st,
-                    target_state=st,
-                    data_logp=float(data_logp),
-                    gttm_energy=float(gttm_e),
-                    gttm_family_breakdown=gttm_families,
-                    target_tension=t_tension,
-                    realized_tension=r_tension,
-                    tension_deviation=dev,
-                    target_tension_penalty=t_pen,
-                    section_style_penalty=s_pen,
-                    section_style_breakdown=s_breakdown,
-                    total_log_weight=edge_weight,
-                )
-            )
-        prev_st = st
+
+        arrival_time = t + 1
+        sec = timeline.at_state(arrival_time)
+        sec_idx = timeline.section_index(arrival_time)
+        is_start = timeline.is_section_start(arrival_time)
+
+        family_breakdown: dict[str, float] = {
+            "meter": 0.0,
+            "grouping": 0.0,
+            "harmonic": 0.0,
+            "prolongational_role": 0.0,
+            "melodic_head": 0.0,
+            "groove": 0.0,
+        }
+        for fname, val in edge_diag.raw_feature_contributions.items():
+            if fname in FEATURE_REGISTRY:
+                family_breakdown[FEATURE_REGISTRY[fname].family] += float(val)
+
+        target_tension_val = (
+            float(edge_diag.target_tension)
+            if edge_diag.target_tension is not None
+            else float(timeline.target_tension(arrival_time))
+        )
+        realized_tension_val = (
+            float(edge_diag.realized_tension)
+            if edge_diag.realized_tension is not None
+            else 0.0
+        )
+
+        diag = TransitionDiagnostic(
+            time_index=t,
+            arrival_time=arrival_time,
+            section_name=sec.name,
+            section_index=sec_idx,
+            is_section_start=is_start,
+            source_state=edge.source,
+            target_state=edge.target,
+            data_logp=float(edge_diag.data_logp),
+            data_contribution=float(edge_diag.data_contribution),
+            gttm_raw_features=dict(edge_diag.raw_feature_contributions),
+            gttm_weighted_features=dict(edge_diag.weighted_feature_contributions),
+            gttm_family_breakdown=family_breakdown,
+            gttm_contribution=float(edge_diag.gttm_contribution),
+            target_tension=target_tension_val,
+            realized_tension=realized_tension_val,
+            tension_deviation=float(edge_diag.tension_deviation),
+            target_tension_energy=float(edge_diag.target_tension_energy),
+            target_tension_contribution=float(edge_diag.target_tension_contribution),
+            section_style_components=dict(edge_diag.section_style_components),
+            section_style_energy=float(edge_diag.section_style_energy),
+            section_style_contribution=float(edge_diag.section_style_contribution),
+            final_log_weight=float(edge.log_weight),
+            right_context_states=tuple(edge_diag.right_contexts),
+        )
+        try:
+            diag.verify_decomposition(tol=1e-9)
+        except Exception as exc:
+            raise ValueError(
+                f"Transition decomposition verification failed at time {t} (arrival {arrival_time}): {exc}"
+            ) from exc
+        trans_diags.append(diag)
 
 
     timeline = SectionTimeline(

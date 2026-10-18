@@ -1,0 +1,16 @@
+[
+  {
+    "name": "A",
+    "start_time": 0,
+    "end_time": 8,
+    "boundary_level": 2,
+    "target_tension_arc": [0.15, 0.55]
+  },
+  {
+    "name": "B",
+    "start_time": 8,
+    "end_time": 16,
+    "boundary_level": 3,
+    "target_tension_arc": [0.55, 0.15]
+  }
+]

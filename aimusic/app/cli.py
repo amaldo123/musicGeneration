@@ -4,7 +4,7 @@ import importlib
 import json
 import sys
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 
 from aimusic.core.diagnostics import (
     RunManifest,
@@ -158,6 +158,62 @@ def _build_track_instruments(args: argparse.Namespace) -> dict[str, Any]:
 def handle_generate(args: argparse.Namespace) -> None:
     """Run the current Method A pipeline and export score, MIDI, and manifest artifacts."""
     TrackInstrumentConfig, render_midi, write_render_package = _load_render_module()
+
+    sections: Optional[tuple[PlanningSection, ...]] = None
+    if getattr(args, "sections_file", None):
+        sections_path = Path(args.sections_file)
+        if not sections_path.exists():
+            print(f"Error: Could not find sections file at {sections_path}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            with sections_path.open("r", encoding="utf-8") as f:
+                raw_sections = json.load(f)
+        except Exception as exc:
+            print(f"Error reading sections file {sections_path}: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if not isinstance(raw_sections, list):
+            print(f"Error: {sections_path} must contain a JSON list of section objects.", file=sys.stderr)
+            sys.exit(1)
+
+        from aimusic.planning.sections import SectionPlanError, SectionTimeline
+
+        parsed_sections = []
+        for idx, item in enumerate(raw_sections):
+            if not isinstance(item, dict):
+                print(f"Error: Section item at index {idx} must be a dictionary.", file=sys.stderr)
+                sys.exit(1)
+            try:
+                sec = PlanningSection(
+                    name=str(item["name"]),
+                    start_time=int(item["start_time"]),
+                    end_time=int(item["end_time"]),
+                    boundary_level=int(item.get("boundary_level", 2)),
+                    target_tension_arc=tuple(float(v) for v in item["target_tension_arc"]),
+                    allowed_meters=tuple(str(m) for m in item["allowed_meters"]) if "allowed_meters" in item and item["allowed_meters"] is not None else None,
+                    groove_family=str(item["groove_family"]) if "groove_family" in item and item["groove_family"] is not None else None,
+                    target_key_id=int(item["target_key_id"]) if "target_key_id" in item and item["target_key_id"] is not None else None,
+                    key_region=tuple(int(k) for k in item["key_region"]) if "key_region" in item and item["key_region"] is not None else None,
+                    target_density=float(item["target_density"]) if "target_density" in item and item["target_density"] is not None else None,
+                    preferred_roles=tuple(str(r) for r in item["preferred_roles"]) if "preferred_roles" in item and item["preferred_roles"] is not None else None,
+                )
+                parsed_sections.append(sec)
+            except SectionPlanError as exc:
+                print(f"SectionPlanError: {exc}", file=sys.stderr)
+                sys.exit(1)
+            except Exception as exc:
+                print(f"SectionPlanError: Failed to construct PlanningSection at index {idx}: {exc}", file=sys.stderr)
+                sys.exit(1)
+
+        sections = tuple(parsed_sections)
+        if "--beats" not in sys.argv and sections:
+            args.beats = sections[-1].end_time
+
+        try:
+            SectionTimeline(sections=sections, total_beats=args.beats, edo=args.edo)
+        except SectionPlanError as exc:
+            print(f"SectionPlanError: {exc}", file=sys.stderr)
+            sys.exit(1)
+
     style_config = StyleConfig(
         allowed_meters=(args.meter,),
         groove_families=(args.groove_family,),
@@ -169,19 +225,33 @@ def handle_generate(args: argparse.Namespace) -> None:
         comping_density=args.comping_density,
         lead_density=args.lead_density,
     )
+    from aimusic.core.config import PlanConfig, SBConfig
+
+    plan_config = PlanConfig(
+        section_guided_proposals=bool(getattr(args, "section_guided_proposals", False)),
+    )
+    sb_config = SBConfig(
+        horizon_t=args.beats,
+        section_guided_proposals=bool(getattr(args, "section_guided_proposals", False)),
+    )
+    prior_weights = PriorWeights(
+        lambda_data=getattr(args, "lambda_data", PriorWeights().lambda_data),
+        lambda_gttm=getattr(args, "lambda_gttm", PriorWeights().lambda_gttm),
+        lambda_target_tension=getattr(args, "lambda_target_tension", 1.0),
+        lambda_section_style=getattr(args, "lambda_section_style", 1.0),
+        sigma_tension=getattr(args, "sigma_tension", 0.1),
+    )
     run_config = MethodARunConfig(
         total_beats=args.beats,
         seed=args.seed,
         use_sampling=args.sample_path,
         style_config=style_config,
         decode_config=decode_config,
-        prior_weights=PriorWeights(
-            lambda_data=getattr(args, "lambda_data", PriorWeights().lambda_data),
-            lambda_gttm=getattr(args, "lambda_gttm", PriorWeights().lambda_gttm),
-            lambda_target_tension=getattr(args, "lambda_target_tension", PriorWeights().lambda_target_tension),
-            lambda_section_style=getattr(args, "lambda_section_style", PriorWeights().lambda_section_style),
-        ),
+        prior_weights=prior_weights,
+        plan_config=plan_config,
+        sb_config=sb_config,
         edo=args.edo,
+        sections=sections,
     )
     prior: Prior | None = (
         NullPrior() if getattr(args, "null_prior", False) else None
@@ -275,6 +345,97 @@ def handle_generate(args: argparse.Namespace) -> None:
     print(f"Generated multitrack MIDI: {midi_path}")
     print(f"Generated manifest: {manifest_path}")
     print(f"Generated RenderPackage: {package.root}")
+
+    # Build REQ-04 per-section summary metrics
+    plan_sections = plan_result.endpoints.sections
+    trans_diags = plan_result.diagnostics.transition_diagnostics
+    section_summaries = []
+    for sec in plan_sections:
+        sec_diags = [d for d in trans_diags if getattr(d, "section_name", None) == sec.name]
+        if not sec_diags:
+            sec_diags = [
+                d for d in trans_diags
+                if sec.start_time < getattr(d, "arrival_time", getattr(d, "time_index", 0) + 1) <= sec.end_time
+            ]
+        if sec_diags:
+            mae = float(sum(abs(d.tension_deviation) for d in sec_diags) / len(sec_diags))
+            mean_realized = float(sum(d.realized_tension for d in sec_diags) / len(sec_diags))
+            mean_target = float(sum(d.target_tension for d in sec_diags) / len(sec_diags))
+            matches = sum(1 for d in sec_diags if getattr(d, "section_style_energy", 0.0) <= 1e-6)
+            match_rate = float(matches / len(sec_diags))
+            align_violations = sum(
+                1 for d in sec_diags
+                if getattr(d, "is_section_start", False) and (
+                    getattr(d, "section_style_components", {}).get("start_alignment", 0.0) > 0.0
+                    or getattr(d.target_state, "beat_in_bar", 0) != 0
+                )
+            )
+        else:
+            mae = 0.0
+            mean_realized = 0.0
+            mean_target = 0.0
+            match_rate = 1.0
+            align_violations = 0
+
+        section_summaries.append({
+            "section": sec.name,
+            "mean_abs_tension_error": mae,
+            "mean_realized_tension": mean_realized,
+            "mean_target_tension": mean_target,
+            "style_match_rate": match_rate,
+            "style_match_rate_pct": f"{match_rate * 100.0:.1f}%",
+            "alignment_violations": align_violations,
+        })
+
+    print("\n=== REQ-04 Section Generation Summary ===")
+    hdr = f"{'Section':<10} {'MAE Tension':<14} {'Mean Realized':<16} {'Mean Target':<14} {'Style Match':<14} {'Alignment Violations':<20}"
+    print(hdr)
+    print("-" * len(hdr))
+    for s_info in section_summaries:
+        print(
+            f"{s_info['section']:<10} "
+            f"{s_info['mean_abs_tension_error']:<14.4f} "
+            f"{s_info['mean_realized_tension']:<16.4f} "
+            f"{s_info['mean_target_tension']:<14.4f} "
+            f"{s_info['style_match_rate_pct']:<14} "
+            f"{s_info['alignment_violations']:<20}"
+        )
+    print("=" * len(hdr) + "\n")
+
+    if getattr(args, "report_dir", None):
+        rep_dir = Path(args.report_dir)
+        rep_dir.mkdir(parents=True, exist_ok=True)
+        rep_manifest = rep_dir / "manifest.json"
+        with rep_manifest.open("w", encoding="utf-8") as f:
+            json.dump(manifest.to_dict(), f, indent=2)
+
+        rep_summary = rep_dir / "summary.json"
+        with rep_summary.open("w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "run_id": manifest.run_id,
+                    "seed": args.seed,
+                    "beats": args.beats,
+                    "edo": args.edo,
+                    "section_summaries": section_summaries,
+                },
+                f,
+                indent=2,
+            )
+
+        rep_md = rep_dir / "report.md"
+        md_lines = [
+            f"# REQ-04 Generation Report — Run `{manifest.run_id}`\n",
+            "| Section | MAE Tension | Mean Realized | Mean Target | Style Match | Alignment Violations |",
+            "|---|---|---|---|---|---|",
+        ]
+        for s in section_summaries:
+            md_lines.append(
+                f"| {s['section']} | {s['mean_abs_tension_error']:.4f} | {s['mean_realized_tension']:.4f} | "
+                f"{s['mean_target_tension']:.4f} | {s['style_match_rate_pct']} | {s['alignment_violations']} |"
+            )
+        rep_md.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
+        print(f"Generated report manifest: {rep_manifest}")
 
 def _load_json_file(path: Path, *, kind: str) -> Any:
     """Load a JSON file, converting missing/malformed files into actionable exits."""
@@ -492,6 +653,25 @@ def main() -> None:
     )
     gen_parser.add_argument("--lambda-target-tension", type=float, default=1.0, help="Weight for section target tension tracking.")
     gen_parser.add_argument("--lambda-section-style", type=float, default=1.0, help="Weight for section style preference matching.")
+    gen_parser.add_argument("--sigma-tension", type=float, default=0.1, help="Standard deviation parameter for tension tracking penalty.")
+    gen_parser.add_argument(
+        "--section-guided-proposals",
+        action="store_true",
+        default=False,
+        help="Enable proposal candidate steering toward section-preferred structural tokens.",
+    )
+    gen_parser.add_argument(
+        "--sections-file",
+        type=str,
+        default=None,
+        help="Path to JSON file containing a list of PlanningSection definitions.",
+    )
+    gen_parser.add_argument(
+        "--report-dir",
+        type=str,
+        default=None,
+        help="Directory to write per-transition diagnostic manifests and REQ-04 summary reports.",
+    )
     gen_parser.add_argument("--out", type=str, default="./outputs")
     gen_parser.add_argument(
         "--prior-bundle",

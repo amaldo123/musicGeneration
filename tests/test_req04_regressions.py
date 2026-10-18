@@ -1,8 +1,7 @@
-"""test_req04_red.py — Red defect proofs for REQ-04.
+"""test_req04_regressions.py — Regression tests for REQ-04 defect proofs.
 
-Proves defects F1, F2 (boundary level & target curve index), F4, F5, F7.
-Every test is decorated with @unittest.expectedFailure, asserting the desired
-correct behavior so that each test currently fails on the observed defect.
+Verifies fixes for defects F1, F2 (boundary level & target curve index), F4, F5, F7.
+All defects are resolved and running as green regression checks.
 """
 
 from __future__ import annotations
