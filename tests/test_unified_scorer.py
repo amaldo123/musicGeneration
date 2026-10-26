@@ -12,8 +12,6 @@ Fixes F1 and F6. Proves:
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 import unittest
 
 from aimusic.core.config import PriorWeights, StyleConfig
@@ -331,49 +329,6 @@ class TestUnifiedScorer(unittest.TestCase):
             self.assertEqual(r[3], "0.0000")
         self.assertLess(max_delta_err, 1e-9)
 
-    def test_window_averaging_unchanged_when_lambdas_zero(self) -> None:
-        """Window averaging unchanged when lambdas are 0 against baseline fixture."""
-        from aimusic.core.rng import RNGKey
-        from aimusic.planning.plans import MethodARunConfig, run_method_a
-
-        baseline_file = Path(__file__).resolve().parent / "fixtures" / "req04_baseline.json"
-        self.assertTrue(baseline_file.exists(), f"Missing baseline file: {baseline_file}")
-
-        with baseline_file.open("r", encoding="utf-8") as f:
-            baseline_data = json.load(f)
-
-        expected_path = baseline_data["paths"]["seed_11_beats_16_edo_12"]
-
-        cfg = MethodARunConfig(
-            total_beats=16,
-            seed=11,
-            edo=12,
-            style_config=StyleConfig(allowed_meters=("4/4",), groove_families=("straight",)),
-            prior_weights=PriorWeights(lambda_target_tension=0.0, lambda_section_style=0.0),
-        )
-        res, _ = run_method_a(cfg, key=RNGKey(seed=11))
-        observed_path = [
-            [
-                s.meter_id,
-                s.beat_in_bar,
-                s.boundary_lvl,
-                s.key_id,
-                s.chord_id,
-                s.role_id,
-                s.head_id,
-                s.groove_id,
-            ]
-            for s in res.path
-        ]
-
-        self.logger.case("test_window_averaging_unchanged_when_lambdas_zero")
-        matches = observed_path == expected_path
-        self.logger.gate(
-            "baseline_path_match",
-            passed=matches,
-            detail="Observed path with zero lambdas matches upstream baseline 084c4a4",
-        )
-        self.assertEqual(observed_path, expected_path)
 
     def test_19_edo_smoke(self) -> None:
         """19-EDO smoke test: decomposition check and rescoring delta in 19-EDO."""

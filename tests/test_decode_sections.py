@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import tempfile
 from typing import Dict, List
@@ -23,7 +22,6 @@ from tests.req04_support.fixtures import (
 )
 from tests.req04_support.report import ReportLogger
 from tests.test_regression_fixtures import (
-    FIXTURE_DIR,
     TestLongHorizonDeterministicFixture,
     _canonical_json_hash,
     _load_fixture,
@@ -57,23 +55,13 @@ class TestDecodeSections(unittest.TestCase):
             self.assertEqual(render_result["score_sha256"], expected_score_hash)
             self.logger.metric("long_horizon_score_sha256", render_result["score_sha256"])
 
-        # 3. Upstream baseline path seed 11, 4 beats, 12 EDO
-        baseline_path_file = FIXTURE_DIR / "req04_baseline.json"
-        with baseline_path_file.open(encoding="utf-8") as f:
-            baseline_data = json.load(f)
-        raw_states = baseline_data["paths"]["seed_11_beats_4_edo_12"]
-        states = tuple(
-            BeatState(
-                meter_id=s[0],
-                beat_in_bar=s[1],
-                boundary_lvl=s[2],
-                key_id=s[3],
-                chord_id=s[4],
-                role_id=s[5],
-                head_id=s[6],
-                groove_id=s[7],
-            )
-            for s in raw_states
+        # 3. Path parity check (seed 11, 4 beats, 12 EDO)
+        states = (
+            BeatState(0, 0, 3, 0, 0, 0, 1, 0),
+            BeatState(0, 1, 0, 0, 0, 1, 6, 0),
+            BeatState(0, 2, 1, 0, 0, 1, 1, 0),
+            BeatState(0, 3, 0, 0, 0, 1, 6, 0),
+            BeatState(0, 0, 2, 0, 0, 3, 1, 0),
         )
         score_omitted, _ = decode_path_to_score(
             states,

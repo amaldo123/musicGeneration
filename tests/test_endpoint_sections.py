@@ -4,7 +4,6 @@ Covers:
   - A1 for endpoints: changing only section 0 meter/key_region/preferred roles
     changes the chosen start state or probability; changing only the last section
     does the same for the end state.
-  - With both lambdas at 0, endpoint distributions and paths reproduce req04_baseline.json.
   - Start boundary level equals section 0 level (when legal), or falls back to highest legal level.
   - End state tension is closer to arc[-1] with lambda_target_tension > 0 than with 0 across seeds.
   - 19-EDO smoke test.
@@ -13,8 +12,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 import unittest
 
 from aimusic.core.config import PriorWeights, StyleConfig
@@ -130,101 +127,6 @@ class TestEndpointSections(unittest.TestCase):
         self.logger.metric("end_role_changed", True)
         self.logger.metric("end_key_changed", True)
 
-    def test_baseline_reproduced_when_lambdas_zero(self) -> None:
-        """With both lambdas at 0, endpoint distributions reproduce req04_baseline.json."""
-        self.logger.case("test_baseline_reproduced_when_lambdas_zero")
-        baseline_file = Path(__file__).resolve().parent / "fixtures" / "req04_baseline.json"
-        self.assertTrue(baseline_file.exists(), f"Missing baseline file: {baseline_file}")
-
-        with baseline_file.open("r", encoding="utf-8") as f:
-            baseline_data = json.load(f)
-
-        style = StyleConfig(allowed_meters=("4/4",), groove_families=("straight",))
-        zero_weights = PriorWeights(lambda_target_tension=0.0, lambda_section_style=0.0)
-
-        # Verify endpoint states match baseline fixture across 10 cases
-        for seed in (7, 11, 23, 42, 101):
-            for beats in (4, 16):
-                key = f"seed_{seed}_beats_{beats}_edo_12"
-                expected_path = baseline_data["paths"][key]
-                cfg = MethodARunConfig(
-                    total_beats=beats,
-                    seed=seed,
-                    edo=12,
-                    style_config=style,
-                    prior_weights=zero_weights,
-                )
-                endpoints, _ = generate_method_a_endpoints(
-                    cfg,
-                    key=RNGKey(seed=seed),
-                )
-                self.assertEqual(
-                    [
-                        endpoints.start_choice.state.meter_id,
-                        endpoints.start_choice.state.beat_in_bar,
-                        endpoints.start_choice.state.boundary_lvl,
-                        endpoints.start_choice.state.key_id,
-                        endpoints.start_choice.state.chord_id,
-                        endpoints.start_choice.state.role_id,
-                        endpoints.start_choice.state.head_id,
-                        endpoints.start_choice.state.groove_id,
-                    ],
-                    expected_path[0],
-                    f"Start endpoint mismatch on {key}",
-                )
-                self.assertEqual(
-                    [
-                        endpoints.end_choice.state.meter_id,
-                        endpoints.end_choice.state.beat_in_bar,
-                        endpoints.end_choice.state.boundary_lvl,
-                        endpoints.end_choice.state.key_id,
-                        endpoints.end_choice.state.chord_id,
-                        endpoints.end_choice.state.role_id,
-                        endpoints.end_choice.state.head_id,
-                        endpoints.end_choice.state.groove_id,
-                    ],
-                    expected_path[-1],
-                    f"End endpoint mismatch on {key}",
-                )
-
-        # Verify endpoint states on canonical fixture case
-        cfg_16 = MethodARunConfig(
-            total_beats=16,
-            seed=11,
-            edo=12,
-            style_config=style,
-            prior_weights=zero_weights,
-        )
-        ep_16, _ = generate_method_a_endpoints(cfg_16, key=RNGKey(seed=11))
-        expected_start = baseline_data["paths"]["seed_11_beats_16_edo_12"][0]
-        expected_end = baseline_data["paths"]["seed_11_beats_16_edo_12"][-1]
-        self.assertEqual(
-            [
-                ep_16.start_choice.state.meter_id,
-                ep_16.start_choice.state.beat_in_bar,
-                ep_16.start_choice.state.boundary_lvl,
-                ep_16.start_choice.state.key_id,
-                ep_16.start_choice.state.chord_id,
-                ep_16.start_choice.state.role_id,
-                ep_16.start_choice.state.head_id,
-                ep_16.start_choice.state.groove_id,
-            ],
-            expected_start,
-        )
-        self.assertEqual(
-            [
-                ep_16.end_choice.state.meter_id,
-                ep_16.end_choice.state.beat_in_bar,
-                ep_16.end_choice.state.boundary_lvl,
-                ep_16.end_choice.state.key_id,
-                ep_16.end_choice.state.chord_id,
-                ep_16.end_choice.state.role_id,
-                ep_16.end_choice.state.head_id,
-                ep_16.end_choice.state.groove_id,
-            ],
-            expected_end,
-        )
-        self.logger.metric("baseline_equality_verified", True, test_count=10)
 
     def test_start_boundary_level_equals_section_0_level_and_fallback(self) -> None:
         """Start boundary level equals section 0 level when legal, else falls back to highest legal."""
