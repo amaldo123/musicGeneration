@@ -346,96 +346,6 @@ def handle_generate(args: argparse.Namespace) -> None:
     print(f"Generated manifest: {manifest_path}")
     print(f"Generated RenderPackage: {package.root}")
 
-    # Build REQ-04 per-section summary metrics
-    plan_sections = plan_result.endpoints.sections
-    trans_diags = plan_result.diagnostics.transition_diagnostics
-    section_summaries = []
-    for sec in plan_sections:
-        sec_diags = [d for d in trans_diags if getattr(d, "section_name", None) == sec.name]
-        if not sec_diags:
-            sec_diags = [
-                d for d in trans_diags
-                if sec.start_time < getattr(d, "arrival_time", getattr(d, "time_index", 0) + 1) <= sec.end_time
-            ]
-        if sec_diags:
-            mae = float(sum(abs(d.tension_deviation) for d in sec_diags) / len(sec_diags))
-            mean_realized = float(sum(d.realized_tension for d in sec_diags) / len(sec_diags))
-            mean_target = float(sum(d.target_tension for d in sec_diags) / len(sec_diags))
-            matches = sum(1 for d in sec_diags if getattr(d, "section_style_energy", 0.0) <= 1e-6)
-            match_rate = float(matches / len(sec_diags))
-            align_violations = sum(
-                1 for d in sec_diags
-                if getattr(d, "is_section_start", False) and (
-                    getattr(d, "section_style_components", {}).get("start_alignment", 0.0) > 0.0
-                    or getattr(d.target_state, "beat_in_bar", 0) != 0
-                )
-            )
-        else:
-            mae = 0.0
-            mean_realized = 0.0
-            mean_target = 0.0
-            match_rate = 1.0
-            align_violations = 0
-
-        section_summaries.append({
-            "section": sec.name,
-            "mean_abs_tension_error": mae,
-            "mean_realized_tension": mean_realized,
-            "mean_target_tension": mean_target,
-            "style_match_rate": match_rate,
-            "style_match_rate_pct": f"{match_rate * 100.0:.1f}%",
-            "alignment_violations": align_violations,
-        })
-
-    print("\n=== REQ-04 Section Generation Summary ===")
-    hdr = f"{'Section':<10} {'MAE Tension':<14} {'Mean Realized':<16} {'Mean Target':<14} {'Style Match':<14} {'Alignment Violations':<20}"
-    print(hdr)
-    print("-" * len(hdr))
-    for s_info in section_summaries:
-        print(
-            f"{s_info['section']:<10} "
-            f"{s_info['mean_abs_tension_error']:<14.4f} "
-            f"{s_info['mean_realized_tension']:<16.4f} "
-            f"{s_info['mean_target_tension']:<14.4f} "
-            f"{s_info['style_match_rate_pct']:<14} "
-            f"{s_info['alignment_violations']:<20}"
-        )
-    print("=" * len(hdr) + "\n")
-
-    if getattr(args, "report_dir", None):
-        rep_dir = Path(args.report_dir)
-        rep_dir.mkdir(parents=True, exist_ok=True)
-        rep_manifest = rep_dir / "manifest.json"
-        with rep_manifest.open("w", encoding="utf-8") as f:
-            json.dump(manifest.to_dict(), f, indent=2)
-
-        rep_summary = rep_dir / "summary.json"
-        with rep_summary.open("w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "run_id": manifest.run_id,
-                    "seed": args.seed,
-                    "beats": args.beats,
-                    "edo": args.edo,
-                    "section_summaries": section_summaries,
-                },
-                f,
-                indent=2,
-            )
-
-        rep_md = rep_dir / "report.md"
-        md_lines = [
-            f"# REQ-04 Generation Report — Run `{manifest.run_id}`\n",
-            "| Section | MAE Tension | Mean Realized | Mean Target | Style Match | Alignment Violations |",
-            "|---|---|---|---|---|---|",
-        ]
-        for s in section_summaries:
-            md_lines.append(
-                f"| {s['section']} | {s['mean_abs_tension_error']:.4f} | {s['mean_realized_tension']:.4f} | "
-                f"{s['mean_target_tension']:.4f} | {s['style_match_rate_pct']} | {s['alignment_violations']} |"
-            )
-        rep_md.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
-        print(f"Generated report manifest: {rep_manifest}")
 
 def _load_json_file(path: Path, *, kind: str) -> Any:
     """Load a JSON file, converting missing/malformed files into actionable exits."""
@@ -665,12 +575,6 @@ def main() -> None:
         type=str,
         default=None,
         help="Path to JSON file containing a list of PlanningSection definitions.",
-    )
-    gen_parser.add_argument(
-        "--report-dir",
-        type=str,
-        default=None,
-        help="Directory to write per-transition diagnostic manifests and REQ-04 summary reports.",
     )
     gen_parser.add_argument("--out", type=str, default="./outputs")
     gen_parser.add_argument(

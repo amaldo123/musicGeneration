@@ -1,4 +1,4 @@
-"""tests/req04_support — shared logger, fixtures, and metrics for REQ-04 tests."""
+"""tests/req04_support — shared logger and fixtures for section generation tests."""
 
 from tests.req04_support.fixtures import (
     EDO19_SMOKE,
@@ -11,12 +11,6 @@ from tests.req04_support.fixtures import (
     Fixture,
     FixtureRun,
     run_fixture,
-)
-from tests.req04_support.metrics import (
-    TensionMetrics,
-    first_path_difference,
-    path_signature,
-    tension_error,
 )
 from tests.req04_support.report import ReportLogger
 
@@ -31,9 +25,5 @@ __all__ = [
     "Fixture",
     "FixtureRun",
     "ReportLogger",
-    "TensionMetrics",
-    "first_path_difference",
-    "path_signature",
     "run_fixture",
-    "tension_error",
 ]
