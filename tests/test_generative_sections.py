@@ -8,6 +8,7 @@ from aimusic.core.rng import RNGKey
 from aimusic.core.vocab import DEFAULT_VOCABULARIES
 from aimusic.planning.candidates import get_valid_next_states
 from aimusic.planning.plans import (
+    EndpointMode,
     MethodARunConfig,
     PlanningSection,
     TransitionDiagnostic,
@@ -107,6 +108,7 @@ class TestGenerativeSections(unittest.TestCase):
             seed=42,
             prior_weights=w_zero,
             sb_config=SBConfig(horizon_t=8, k_max=16, d_max=4),
+            endpoint_mode=EndpointMode.SINGLETON,
         )
         res_baseline, _ = run_method_a(cfg_baseline, key=self.key)
 
@@ -134,6 +136,7 @@ class TestGenerativeSections(unittest.TestCase):
             sections=custom_sections,
             prior_weights=w_zero,
             sb_config=SBConfig(horizon_t=8, k_max=16, d_max=4),
+            endpoint_mode=EndpointMode.SINGLETON,
         )
         res_custom_zero, _ = run_method_a(cfg_custom_zero, key=self.key)
 

@@ -10,6 +10,7 @@ from aimusic.core.core_types import BeatState
 from aimusic.core.rng import RNGKey
 from aimusic.planning.graph import SparseGraph
 from aimusic.planning.plans import (
+    EndpointMode,
     MethodAPlanDiagnostics,
     MethodARunConfig,
     PlanningSection,
@@ -179,6 +180,8 @@ def run_fixture(
         fixture.sb_config or SBConfig(horizon_t=fixture.total_beats, k_max=16, d_max=4),
     )
 
+    endpoint_mode = overrides.pop("endpoint_mode", EndpointMode.SINGLETON)
+
     cfg = MethodARunConfig(
         total_beats=fixture.total_beats,
         seed=seed,
@@ -187,6 +190,7 @@ def run_fixture(
         prior_weights=weights,
         style_config=style_config,
         sb_config=sb_config,
+        endpoint_mode=endpoint_mode,
         **overrides,
     )
     plan_result, _ = run_method_a(cfg, key=RNGKey(seed=seed))

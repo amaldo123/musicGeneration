@@ -22,7 +22,6 @@ from tests.req04_support.fixtures import (
 )
 from tests.req04_support.report import ReportLogger
 from tests.test_regression_fixtures import (
-    TestLongHorizonDeterministicFixture,
     _canonical_json_hash,
     _load_fixture,
 )
@@ -46,12 +45,14 @@ class TestDecodeSections(unittest.TestCase):
         self.logger.metric("short_passage_golden_hash", golden_hash)
 
         # 2. Long horizon deterministic fixture
+        from tests.test_regression_fixtures import TestLongHorizonDeterministicFixture
+
         lh_fix = _load_fixture("long_horizon_smoke.json")
         lh_runner = TestLongHorizonDeterministicFixture()
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_midi = Path(tmp_dir) / "lh.mid"
             render_result = lh_runner._render_fixture(lh_fix, tmp_midi)
-            expected_score_hash = "cc1d41eb69c124023d3de4de4be700579019842824f848b38e987a258c2670cc"
+            expected_score_hash = "afbc237ea0397061f8c9938b56c065104349def6ce51ba87c2939aabdc794489"
             self.assertEqual(render_result["score_sha256"], expected_score_hash)
             self.logger.metric("long_horizon_score_sha256", render_result["score_sha256"])
 
@@ -80,7 +81,7 @@ class TestDecodeSections(unittest.TestCase):
         )
         self.assertEqual(score_omitted, score_none)
         score_hash = _canonical_json_hash(score_none.to_dict())
-        self.assertEqual(score_hash, "83b7f96ce3e5ee8d1243a0005582ac5e45623cfe347a7b957197ad742bfddaec")
+        self.assertEqual(score_hash, "197e046fc97619754a799ed1af8e528a818ee7db54f75bf33d5cf79641e3c4a9")
         self.logger.metric("baseline_seed11_score_sha256", score_hash)
 
     def test_2_density_monotonicity(self) -> None:

@@ -16,7 +16,7 @@ from aimusic.planning.candidates import (
     propose_boundary_levels,
 )
 from aimusic.planning.graph import build_sparse_graph
-from aimusic.planning.plans import MethodARunConfig, PlanningSection, run_method_a
+from aimusic.planning.plans import EndpointMode, MethodARunConfig, PlanningSection, run_method_a
 from aimusic.planning.sections import EdgeSectionView
 from aimusic.scoring.priors import NullPrior
 from tests.req04_support.report import ReportLogger
@@ -328,11 +328,11 @@ class TestCandidateSectionGuidance(unittest.TestCase):
         all_passed = True
         for seed in seeds:
             res_23, _ = run_method_a(
-                MethodARunConfig(total_beats=16, seed=seed, sections=sec_23, style_config=style, sb_config=sb, prior_weights=weights),
+                MethodARunConfig(total_beats=16, seed=seed, sections=sec_23, style_config=style, sb_config=sb, prior_weights=weights, endpoint_mode=EndpointMode.SINGLETON),
                 key=RNGKey(seed=seed),
             )
             res_32, _ = run_method_a(
-                MethodARunConfig(total_beats=16, seed=seed, sections=sec_32, style_config=style, sb_config=sb, prior_weights=weights),
+                MethodARunConfig(total_beats=16, seed=seed, sections=sec_32, style_config=style, sb_config=sb, prior_weights=weights, endpoint_mode=EndpointMode.SINGLETON),
                 key=RNGKey(seed=seed),
             )
 
