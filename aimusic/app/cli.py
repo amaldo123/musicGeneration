@@ -16,7 +16,10 @@ from aimusic.core.config import (
     DecodeConfig,
     EDOConfig,
     MicrotonalRendering,
+    PlanConfig,
     PriorWeights,
+    SBConfig,
+    SectioningStrategy,
     StyleConfig,
 )
 from aimusic.core.core_types import Score, ScoreValidationError
@@ -225,13 +228,17 @@ def handle_generate(args: argparse.Namespace) -> None:
         comping_density=args.comping_density,
         lead_density=args.lead_density,
     )
-    from aimusic.core.config import PlanConfig, SBConfig
-
     plan_config = PlanConfig(
+        sectioning_strategy=(
+            SectioningStrategy.SECTION_WISE if getattr(args, "sections", None)
+            else SectioningStrategy.SINGLE_PASS
+        ),
+        section_names=tuple(getattr(args, "sections", None) or ()),
         section_guided_proposals=bool(getattr(args, "section_guided_proposals", False)),
     )
     sb_config = SBConfig(
         horizon_t=args.beats,
+        max_horizon_per_solve=getattr(args, "max_horizon_per_solve", None),
         section_guided_proposals=bool(getattr(args, "section_guided_proposals", False)),
     )
     prior_weights = PriorWeights(
@@ -299,7 +306,7 @@ def handle_generate(args: argparse.Namespace) -> None:
             }
         ),
         structural_stats=structural_stats,
-        sb_stats=SBDiagnostics.from_solution(plan_result.sb_solution),
+        sb_stats=SBDiagnostics.from_plan(plan_result),
     )
 
     out_dir = Path(args.out)
@@ -531,6 +538,8 @@ def main() -> None:
     gen_parser = subparsers.add_parser("generate", help="Generate a new score")
     gen_parser.add_argument("--seed", type=int, default=42)
     gen_parser.add_argument("--beats", type=int, default=8)
+    gen_parser.add_argument("--sections", nargs="+", help="Ordered section names; enables one SB solve per section.")
+    gen_parser.add_argument("--max-horizon-per-solve", type=int, help="Maximum beat transitions in any one graph/SB solve.")
     gen_parser.add_argument("--edo", type=int, default=12)
     gen_parser.add_argument("--meter", choices=DEFAULT_METER_SIGNATURES, default="4/4")
     gen_parser.add_argument("--groove-family", choices=DEFAULT_GROOVE_FAMILIES, default="straight")

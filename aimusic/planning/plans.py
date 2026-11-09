@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+from dataclasses import dataclass, field, replace
+
 
 import numpy as np
 
@@ -25,17 +26,39 @@ from aimusic.core.rng import RNGKey, allocate_named_keys, random_unit
 from aimusic.core.vocab import TonalContext, Vocabularies, build_tonal_context
 from aimusic.decode import decode_path_to_score
 from aimusic.planning.graph import EdgeScoreDiagnostics, SparseGraph, build_sparse_graph
+from aimusic.planning.endpoint_feasibility import (  # noqa: F401  (re-exported)
+    EndpointFallbackPolicy,
+    EndpointFeasibilityError,
+    EndpointMarginalError,
+    EndpointMassInfeasibleError,
+    EndpointMassReport,
+    EndpointMode,
+    EndpointReachabilityError,
+    EndpointResolution,
+    EndpointSolveResult,
+    EndpointSolverNonConvergenceError,
+    EndpointTolerances,
+    EndpointValidationError,
+    UnreachablePolicy,
+    positive_mass_distribution as _positive_mass_distribution,
+    resolve_endpoint_distributions,
+    resolve_endpoint_support,
+    solve_endpoint_bridge,
+    validate_solution_marginals,
+)
 from aimusic.planning.sb import (
     SBProblem,
     SBSolution,
     SampledBridgePath,
     SolvedBridge,
-    build_sb_problem,
     map_bridge_path,
     sample_bridge_path,
-    solve_sb,
 )
-from aimusic.scoring.priors import NullPrior, Prior
+from aimusic.scoring.priors import NullPrior, Prior, PriorContext
+from aimusic.planning.stitching import (
+    SectionJoinDiagnostics, StitchPolicy, concatenate_section_paths, stitch_cost,
+    map_section_paths, section_path_score, shared_boundary_distribution,
+)
 from aimusic.theory.tonal import get_fifth_steps
 
 
@@ -120,8 +143,29 @@ class MethodARunConfig:
     neural_prior_config: NeuralPriorConfig = field(default_factory=NeuralPriorConfig)
     edo: int = 12
     sections: Optional[Tuple[PlanningSection, ...]] = None
+    endpoint_mode: EndpointMode = EndpointMode.DISTRIBUTION
+    unreachable_policy: EndpointFallbackPolicy = EndpointFallbackPolicy.DROP_UNREACHABLE_ONLY
+    endpoint_flow_tolerance: float = 1e-9
+    endpoint_capacity_epsilon: float = 1e-14
+    max_fallback_iterations: int = 100
+    endpoint_interior_margin: float = 1e-2
+    endpoint_marginal_tolerance: float = 1e-6
 
     def __post_init__(self) -> None:
+        # Validates positivity and the tolerance relations in one place.
+        EndpointTolerances(
+            flow_tolerance=self.endpoint_flow_tolerance,
+            marginal_tolerance=self.endpoint_marginal_tolerance,
+            capacity_epsilon=self.endpoint_capacity_epsilon,
+        )
+        _require_real("endpoint_interior_margin", self.endpoint_interior_margin)
+        if not 0.0 <= self.endpoint_interior_margin < 1.0:
+            raise ValueError("endpoint_interior_margin must be in [0, 1).")
+        _require_int("max_fallback_iterations", self.max_fallback_iterations, minimum=0)
+        if not isinstance(self.endpoint_mode, EndpointMode):
+            raise TypeError("endpoint_mode must be an EndpointMode value.")
+        if not isinstance(self.unreachable_policy, EndpointFallbackPolicy):
+            raise TypeError("unreachable_policy must be an EndpointFallbackPolicy value.")
         _require_int("total_beats", self.total_beats, minimum=1)
         _require_int("seed", self.seed, minimum=0)
         if not isinstance(self.use_sampling, bool):
@@ -174,9 +218,15 @@ class MethodAEndpoints:
 
     pi0: EndpointDistribution
     piT: EndpointDistribution
+    sections: Tuple[PlanningSection, ...]
+
+
+@dataclass(frozen=True)
+class ChosenMethodAEndpoints(MethodAEndpoints):
+    """Endpoints with selected singleton start and terminal choices."""
+
     start_choice: EndpointChoice
     end_choice: EndpointChoice
-    sections: Tuple[PlanningSection, ...]
 
 
 def _parse_beat_state(val: Any) -> BeatState:
@@ -434,11 +484,13 @@ class MethodAPlanDiagnostics:
 
     section_tags: Tuple[str, ...]
     target_tension_arcs: Tuple[Tuple[float, ...], ...]
-    chosen_start_state: BeatState
-    chosen_end_state: BeatState
+    # Populated only in SINGLETON mode; None in DISTRIBUTION mode, where no
+    # endpoint choice is made.
+    chosen_start_state: Optional[BeatState]
+    chosen_end_state: Optional[BeatState]
     endpoint_selection_mode: str
-    chosen_start_probability: float
-    chosen_end_probability: float
+    chosen_start_probability: Optional[float]
+    chosen_end_probability: Optional[float]
     path_mode: str
     graph_layer_sizes: Tuple[int, ...]
     bridge_iterations: int
@@ -446,6 +498,11 @@ class MethodAPlanDiagnostics:
     rng_stream_ids: Tuple[str, ...]
     transition_diagnostics: Tuple[TransitionDiagnostic, ...] = ()
     timeline: Optional[SectionTimeline] = None
+    endpoint_mode: str = "distribution"
+    endpoint_request_modified: bool = False
+    endpoint_modifications: Tuple[str, ...] = ()
+    endpoint_start_feasible_mass: Optional[float] = None
+    endpoint_end_feasible_mass: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -466,13 +523,69 @@ class MethodAPlanResult:
     diagnostics: MethodAPlanDiagnostics
     path_edge_diagnostics: Tuple[EdgeScoreDiagnostics, ...] = ()
     timeline: Optional[SectionTimeline] = None
+    start_mass: Optional[EndpointMassReport] = None
+    end_mass: Optional[EndpointMassReport] = None
+    endpoint_resolution: Optional[EndpointResolution] = None
+
+    @property
+    def solutions(self) -> Tuple[SBSolution, ...]:
+        return (self.sb_solution,)
+
+
+@dataclass(frozen=True)
+class SectionRunResult:
+    section: PlanningSection
+    graph: SparseGraph
+    sb_solution: SBSolution
+    bridge: SolvedBridge
+    start_mass: EndpointMassReport
+    end_mass: EndpointMassReport
+    endpoint_resolution: EndpointResolution
+    path: Tuple[BeatState, ...]
+    path_score: Optional[float]
+    sampled_path: Optional[SampledBridgePath]
+    rng_stream_id: str
+
+
+@dataclass(frozen=True)
+class SectionWisePlanResult:
+    """Local solver artifacts plus a global path; no fictitious whole-song solve."""
+
+    run_config: MethodARunConfig
+    tonal_context: TonalContext
+    vocabularies: Vocabularies
+    endpoints: MethodAEndpoints
+    section_results: Tuple[SectionRunResult, ...]
+    boundary_choices: Tuple[EndpointChoice, ...]
+    joins: Tuple[SectionJoinDiagnostics, ...]
+    path: Tuple[BeatState, ...]
+    path_score: Optional[float]
+    diagnostics: MethodAPlanDiagnostics
+    path_edge_diagnostics: Tuple[EdgeScoreDiagnostics, ...]
+
+    @property
+    def solutions(self) -> Tuple[SBSolution, ...]:
+        return tuple(section.sb_solution for section in self.section_results)
+
+
+class SectionPlanningError(ValueError):
+    """Failure annotated with the section and stage, retaining the cause."""
+
+    def __init__(self, index: int, section: PlanningSection, stage: str, cause: Exception):
+        self.section_index = index
+        self.section = section
+        self.stage = stage
+        super().__init__(
+            f"Section {index} '{section.name}' [{section.start_time}, {section.end_time}) "
+            f"failed during {stage}: {cause}"
+        )
 
 
 @dataclass(frozen=True)
 class ExactBridgeDemoResult:
     """Compatibility wrapper for legacy bridge-demo scripts."""
 
-    plan_result: MethodAPlanResult
+    plan_result: MethodAPlanResult | SectionWisePlanResult
     score: Score
     output_path: str
 
@@ -527,17 +640,35 @@ def _singleton_endpoint_distribution(state: BeatState, *, time_index: int) -> En
     )
 
 
+def _sorted_endpoint_distribution(
+    endpoint: EndpointDistribution,
+) -> EndpointDistribution:
+    """Canonicalize support order without changing support or state masses."""
+    pairs = sorted(
+        zip(endpoint.layer.states, endpoint.probabilities),
+        key=lambda item: _state_sort_key(item[0]),
+    )
+    return EndpointDistribution(
+        layer=replace(endpoint.layer, states=tuple(state for state, _ in pairs)),
+        probabilities=tuple(probability for _, probability in pairs),
+    )
+
+
 def _sample_index_from_distribution(
     endpoint: EndpointDistribution,
     key: RNGKey,
 ) -> tuple[int, RNGKey]:
     threshold, next_key = random_unit(key)
     running = 0.0
+    last_positive = -1
     for idx, probability in enumerate(endpoint.probabilities):
         running += probability
-        if threshold <= running:
-            return idx, next_key
-    return len(endpoint.probabilities) - 1, next_key
+        if probability > 0.0:
+            last_positive = idx
+            if threshold < running:
+                return idx, next_key
+    # Round-off fallback: the last outcome with positive mass, never a zero-mass one.
+    return last_positive, next_key
 
 
 def _choose_endpoint_state(
@@ -1092,14 +1223,17 @@ def generate_method_a_endpoints(
     run_config: MethodARunConfig,
     *,
     vocabularies: Optional[Vocabularies] = None,
-    key: RNGKey,
+    key: Optional[RNGKey] = None,
     sample_endpoints: bool = False,
     sections: Optional[Sequence[PlanningSection]] = None,
     timeline: Optional[SectionTimeline] = None,
     edo: Optional[int] = None,
-) -> tuple[MethodAEndpoints, RNGKey]:
-    if not isinstance(key, RNGKey):
-        raise TypeError("key must be an RNGKey.")
+) -> MethodAEndpoints | tuple[MethodAEndpoints, RNGKey]:
+    """Generate endpoint distributions and section metadata.
+
+    When key is omitted, returns MethodAEndpoints without selecting singleton states.
+    When key is provided, selects start and terminal states and returns (MethodAEndpoints, next_key).
+    """
     resolved_edo = run_config.edo if edo is None else edo
     resolved_vocabs = _resolved_vocabs(
         vocabularies, run_config.style_config, resolved_edo
@@ -1133,6 +1267,12 @@ def generate_method_a_endpoints(
         timeline=resolved_timeline,
         edo=resolved_edo,
     )
+    if key is None:
+        return MethodAEndpoints(
+            pi0=pi0,
+            piT=piT,
+            sections=resolved_sections,
+        )
     start_choice, next_key = _choose_endpoint_state(
         pi0,
         key=key,
@@ -1143,13 +1283,27 @@ def generate_method_a_endpoints(
         key=next_key,
         sample=sample_endpoints,
     )
-    return MethodAEndpoints(
+    return ChosenMethodAEndpoints(
         pi0=pi0,
         piT=piT,
+        sections=resolved_sections,
         start_choice=start_choice,
         end_choice=end_choice,
-        sections=resolved_sections,
     ), next_key
+
+
+def select_singleton_endpoints(
+    endpoints: MethodAEndpoints,
+    *,
+    key: RNGKey,
+    sample: bool = False,
+) -> tuple[EndpointChoice, EndpointChoice, RNGKey]:
+    """SINGLETON-mode only: choose one start and one terminal state (argmax or sample)."""
+    if not isinstance(key, RNGKey):
+        raise TypeError("key must be an RNGKey.")
+    start_choice, next_key = _choose_endpoint_state(endpoints.pi0, key=key, sample=sample)
+    end_choice, next_key = _choose_endpoint_state(endpoints.piT, key=next_key, sample=sample)
+    return start_choice, end_choice, next_key
 
 
 def run_method_a(
@@ -1158,8 +1312,10 @@ def run_method_a(
     key: RNGKey,
     prior: Optional[Prior] = None,
     vocabularies: Optional[Vocabularies] = None,
-) -> tuple[MethodAPlanResult, RNGKey]:
+) -> tuple[MethodAPlanResult | SectionWisePlanResult, RNGKey]:
     """Run Method A from endpoint planning through SB path extraction."""
+    if run_config.plan_config.sectioning_strategy is SectioningStrategy.SECTION_WISE:
+        return run_section_wise(run_config, key=key, prior=prior, vocabularies=vocabularies)
     _logger.info(f"Method A: {run_config.total_beats} beats, seed={run_config.seed}")
     tonal_context = build_tonal_context(
         run_config.edo,
@@ -1182,23 +1338,34 @@ def run_method_a(
     resolved_sections = timeline.sections
     for message in validation_messages:
         _logger.warning(message)
-    endpoints, _ = generate_method_a_endpoints(
+    endpoints = generate_method_a_endpoints(
         run_config,
         vocabularies=resolved_vocabs,
-        key=streams["endpoint_choice"],
-        sample_endpoints=run_config.use_sampling,
         sections=resolved_sections,
         timeline=timeline,
         edo=run_config.edo,
     )
-    _logger.info(f"Endpoints: start={endpoints.start_choice.state} end={endpoints.end_choice.state}")
-    start_endpoint = _singleton_endpoint_distribution(
-        endpoints.start_choice.state,
-        time_index=0,
-    )
-    end_endpoint = _singleton_endpoint_distribution(
-        endpoints.end_choice.state,
-        time_index=run_config.total_beats,
+    start_choice: Optional[EndpointChoice] = None
+    end_choice: Optional[EndpointChoice] = None
+    if run_config.endpoint_mode is EndpointMode.SINGLETON:
+        # Selection lives only in this branch: pick one state per side, then
+        # collapse to delta distributions.
+        start_choice, end_choice, _ = select_singleton_endpoints(
+            endpoints,
+            key=streams["endpoint_choice"],
+            sample=run_config.use_sampling,
+        )
+        start_endpoint = _singleton_endpoint_distribution(start_choice.state, time_index=0)
+        end_endpoint = _singleton_endpoint_distribution(
+            end_choice.state, time_index=run_config.total_beats
+        )
+    else:
+        # DISTRIBUTION: no choice. Keep every positive-mass start/terminal state.
+        start_endpoint = _positive_mass_distribution(endpoints.pi0)
+        end_endpoint = _positive_mass_distribution(endpoints.piT)
+    _logger.info(
+        f"Endpoints ({run_config.endpoint_mode.value}): "
+        f"{len(start_endpoint.layer)} start states, {len(end_endpoint.layer)} terminal states"
     )
     graph, _ = build_sparse_graph(
         start_layer=start_endpoint.layer,
@@ -1220,16 +1387,39 @@ def run_method_a(
         ),
     )
     _logger.info(f"Graph built: {len(graph.layers)} layers, {sum(len(l.states) for l in graph.layers)} states")
+    # feasibility (L1 + L2 max-flow) -> fallback by policy -> build_sb_problem ->
+    # solve_sb -> convergence + marginal validation. Raises on any failure, so path
+    # extraction below only ever sees a validated bridge.
+    solved = solve_endpoint_bridge(
+        graph,
+        start_endpoint,
+        end_endpoint,
+        sb_config=resolved_sb,
+        policy=run_config.unreachable_policy,
+        flow_tolerance=run_config.endpoint_flow_tolerance,
+        max_fallback_iterations=run_config.max_fallback_iterations,
+        marginal_tolerance=run_config.endpoint_marginal_tolerance,
+        capacity_epsilon=run_config.endpoint_capacity_epsilon,
+        interior_margin=run_config.endpoint_interior_margin,
+    )
+    graph = solved.graph  # restricted: zero-mass boundary states and dead paths pruned
+    resolution = solved.resolution
+    problem, solution, bridge = solved.problem, solved.solution, solved.bridge
+    start_mass, end_mass = solved.start_mass, solved.end_mass
+    if resolution.request_modified:
+        _logger.warning(
+            f"Endpoint distributions modified {list(resolution.modifications)} "
+            f"({resolution.termination_reason}): "
+            f"start removed={start_mass.removed_state_mass:.6f} "
+            f"trimmed={start_mass.trimmed_mass:.6f}, "
+            f"terminal removed={end_mass.removed_state_mass:.6f} "
+            f"trimmed={end_mass.trimmed_mass:.6f}"
+        )
     aligned_endpoints = MethodAEndpoints(
-        pi0=_align_endpoint_distribution(endpoints.pi0, graph.layers[0]),
-        piT=_align_endpoint_distribution(endpoints.piT, graph.layers[-1]),
-        start_choice=endpoints.start_choice,
-        end_choice=endpoints.end_choice,
+        pi0=start_mass.effective,
+        piT=end_mass.effective,
         sections=endpoints.sections,
     )
-    problem = build_sb_problem(graph, start_endpoint, end_endpoint, sb_config=resolved_sb)
-    solution = solve_sb(problem)
-    bridge = solution.to_bridge()
     _logger.info(f"SB solved: converged={solution.trace.converged}, iterations={solution.trace.iterations}")
 
     if run_config.use_sampling:
@@ -1343,11 +1533,17 @@ def run_method_a(
     diagnostics = MethodAPlanDiagnostics(
         section_tags=tuple(section.name for section in endpoints.sections),
         target_tension_arcs=tuple(section.target_tension_arc for section in endpoints.sections),
-        chosen_start_state=endpoints.start_choice.state,
-        chosen_end_state=endpoints.end_choice.state,
-        endpoint_selection_mode=endpoints.start_choice.selection_mode,
-        chosen_start_probability=endpoints.start_choice.selected_probability,
-        chosen_end_probability=endpoints.end_choice.selected_probability,
+        chosen_start_state=None if start_choice is None else start_choice.state,
+        chosen_end_state=None if end_choice is None else end_choice.state,
+        endpoint_selection_mode=(
+            "distribution" if start_choice is None else start_choice.selection_mode
+        ),
+        chosen_start_probability=(
+            None if start_choice is None else start_choice.selected_probability
+        ),
+        chosen_end_probability=(
+            None if end_choice is None else end_choice.selected_probability
+        ),
         path_mode="sample" if run_config.use_sampling else "map",
         graph_layer_sizes=graph.diagnostics.layer_sizes,
         bridge_iterations=solution.trace.iterations,
@@ -1355,6 +1551,11 @@ def run_method_a(
         rng_stream_ids=stream_ids,
         transition_diagnostics=tuple(trans_diags),
         timeline=timeline,
+        endpoint_mode=run_config.endpoint_mode.value,
+        endpoint_request_modified=resolution.request_modified,
+        endpoint_modifications=resolution.modifications,
+        endpoint_start_feasible_mass=start_mass.feasible_mass,
+        endpoint_end_feasible_mass=end_mass.feasible_mass,
     )
     return MethodAPlanResult(
         run_config=run_config,
@@ -1371,7 +1572,289 @@ def run_method_a(
         diagnostics=diagnostics,
         path_edge_diagnostics=graph.diagnostics_for_path(path),
         timeline=timeline,
+        start_mass=start_mass,
+        end_mass=end_mass,
+        endpoint_resolution=resolution,
     ), next_key
+
+
+def run_section_wise(
+    run_config: MethodARunConfig,
+    *,
+    key: RNGKey,
+    prior: Optional[Prior] = None,
+    vocabularies: Optional[Vocabularies] = None,
+) -> tuple[SectionWisePlanResult, RNGKey]:
+    """Solve once per section with shared multi-state boundary marginals."""
+    if not isinstance(key, RNGKey):
+        raise TypeError("key must be an RNGKey.")
+    tonal_context = build_tonal_context(run_config.edo, run_config.style_config, vocabularies=vocabularies)
+    vocabs = tonal_context.vocabularies
+    sections = build_section_plan(run_config)
+    sb_config = _resolved_sb_config(run_config)
+    endpoints = generate_method_a_endpoints(run_config, vocabularies=vocabs)
+    start_choice: Optional[EndpointChoice] = None
+    end_choice: Optional[EndpointChoice] = None
+    if run_config.endpoint_mode is EndpointMode.SINGLETON:
+        start_choice, end_choice, _ = select_singleton_endpoints(
+            endpoints,
+            key=key.derive("endpoint_choice"),
+            sample=run_config.use_sampling,
+        )
+        start_endpoint = _singleton_endpoint_distribution(start_choice.state, time_index=0)
+        end_endpoint = _singleton_endpoint_distribution(
+            end_choice.state, time_index=run_config.total_beats
+        )
+    else:
+        start_endpoint = _positive_mass_distribution(endpoints.pi0)
+        end_endpoint = _positive_mass_distribution(endpoints.piT)
+    boundaries = [_sorted_endpoint_distribution(start_endpoint)]
+    for index, section in enumerate(sections[:-1]):
+        try:
+            # Use cumulative time for metrical phase, even though solves use local time.
+            boundary_run = replace(
+                run_config, total_beats=section.end_time, sb_config=None,
+                plan_config=replace(run_config.plan_config,
+                                    sectioning_strategy=SectioningStrategy.SINGLE_PASS),
+            )
+            distribution = generate_end_endpoint_distribution(boundary_run, vocabularies=vocabs)
+            # Respect the authored boundary level where the meter permits it.
+            distribution = replace(distribution, layer=replace(
+                distribution.layer, states=tuple(
+                    replace(state, boundary_lvl=section.boundary_level)
+                    if state.beat_in_bar == 0 else state
+                    for state in distribution.layer.states
+                ),
+            ))
+            # Start preferences use the same global metrical phase as the end.
+            following_start = _build_endpoint_distribution(
+                time_index=section.end_time,
+                beat_in_bar_by_meter={meter_id: section.end_time % vocabs.meters.token_for_id(meter_id).beats_per_bar
+                                      for meter_id in _meter_ids(run_config.style_config, vocabs)},
+                is_start=True, run_config=boundary_run, vocabularies=vocabs,
+            )
+            boundaries.append(_sorted_endpoint_distribution(
+                shared_boundary_distribution(
+                    distribution,
+                    following_start,
+                    run_config.plan_config.stitching,
+                    vocabs,
+                    run_config.edo,
+                )
+            ))
+        except (ValueError, RuntimeError) as exc:
+            raise SectionPlanningError(index, section, "boundary planning", exc) from exc
+    boundaries.append(_sorted_endpoint_distribution(end_endpoint))
+    results: list[SectionRunResult] = []
+    pending = []
+    for index, section in enumerate(sections):
+        stage = "graph construction"
+        try:
+            horizon = section.end_time - section.start_time
+            local_sb = replace(sb_config, horizon_t=horizon)
+            start = replace(boundaries[index], layer=replace(boundaries[index].layer, time_index=0))
+            end = replace(boundaries[index + 1], layer=replace(boundaries[index + 1].layer, time_index=horizon))
+            edge_times = tuple(sorted(set(
+                ([0] if index > 0 else []) + ([horizon - 1] if index < len(sections) - 1 else [])
+            )))
+            context = PriorContext(section_name=section.name, metadata=(
+                ("section_index", str(index)), ("section_start", str(section.start_time)),
+                ("section_end", str(section.end_time)),
+                ("boundary_level", str(section.boundary_level)),
+                ("target_tension_arc", repr(section.target_tension_arc)),
+            ))
+            stream_id = f"section.{index}.{section.name}"
+            graph, _ = build_sparse_graph(
+                start.layer, end.layer, horizon, sb_config=local_sb,
+                style_config=run_config.style_config, vocabularies=vocabs,
+                prior=prior, weights=run_config.prior_weights, edo=run_config.edo,
+                key=key.derive(stream_id).derive("candidate_proposal"), d_max=local_sb.d_max,
+                section_context=context,
+                stitch_policy=StitchPolicy(run_config.plan_config.stitching, vocabs,
+                                          run_config.edo, edge_times),
+            )
+            pending.append((section, graph, local_sb, stream_id))
+        except (ValueError, RuntimeError) as exc:
+            raise SectionPlanningError(index, section, stage, exc) from exc
+    for index, (section, graph, local_sb, stream_id) in enumerate(pending):
+        stage = "endpoint bridge solve"
+        try:
+            start = replace(
+                boundaries[index],
+                layer=replace(boundaries[index].layer, time_index=0),
+            )
+            end = replace(
+                boundaries[index + 1],
+                layer=replace(boundaries[index + 1].layer, time_index=local_sb.horizon_t),
+            )
+            solved = solve_endpoint_bridge(
+                graph,
+                start,
+                end,
+                sb_config=local_sb,
+                policy=run_config.unreachable_policy,
+                flow_tolerance=run_config.endpoint_flow_tolerance,
+                max_fallback_iterations=run_config.max_fallback_iterations,
+                marginal_tolerance=run_config.endpoint_marginal_tolerance,
+                capacity_epsilon=run_config.endpoint_capacity_epsilon,
+                interior_margin=run_config.endpoint_interior_margin,
+            )
+            # An internal boundary is one authored distribution shared by both
+            # neighbors.  A section may not independently trim, drop, blend or
+            # renormalize that request: if it is infeasible, report the section
+            # whose constraints rejected it.
+            if index > 0 and solved.start_mass.modified:
+                raise EndpointValidationError(
+                    "Shared start-boundary distribution would be modified by "
+                    f"section {section.name!r}; use compatible section constraints."
+                )
+            if index < len(sections) - 1 and solved.end_mass.modified:
+                raise EndpointValidationError(
+                    "Shared terminal-boundary distribution would be modified by "
+                    f"section {section.name!r}; use compatible section constraints."
+                )
+            results.append(SectionRunResult(
+                section=section,
+                graph=solved.graph,
+                sb_solution=solved.solution,
+                bridge=solved.bridge,
+                start_mass=solved.start_mass,
+                end_mass=solved.end_mass,
+                endpoint_resolution=replace(
+                    solved.resolution, start=solved.start_mass, end=solved.end_mass,
+                ),
+                path=(),
+                path_score=None,
+                sampled_path=None,
+                rng_stream_id=stream_id,
+            ))
+        except (EndpointFeasibilityError, ValueError, RuntimeError) as exc:
+            raise SectionPlanningError(index, section, stage, exc) from exc
+
+    for index in range(1, len(results)):
+        left_boundary = results[index - 1].end_mass.effective
+        right_boundary = results[index].start_mass.effective
+        if (left_boundary.layer.states != right_boundary.layer.states
+                or left_boundary.probabilities != right_boundary.probabilities):
+            cause = EndpointValidationError(
+                "Adjacent section solves did not preserve the identical shared "
+                "boundary support and probabilities."
+            )
+            raise SectionPlanningError(
+                index, results[index].section, "shared boundary validation", cause
+            ) from cause
+
+    if not run_config.use_sampling:
+        try:
+            paths = map_section_paths(tuple(result.bridge for result in results))
+        except ValueError as exc:
+            raise SectionPlanningError(0, sections[0], "joint path extraction", exc) from exc
+    for index, result in enumerate(results):
+        try:
+            if run_config.use_sampling:
+                sampled_path, _ = sample_bridge_path(
+                    result.bridge, key.derive(result.rng_stream_id).derive("bridge_sampling"),
+                    start_state=None if index == 0 else results[index - 1].path[-1],
+                    include_edges=True, include_debug=True,
+                )
+                results[index] = replace(result, path=sampled_path.path, sampled_path=sampled_path)
+            else:
+                results[index] = replace(result, path=paths[index], path_score=section_path_score(
+                    result.bridge, paths[index], include_initial=index == 0))
+        except (ValueError, RuntimeError) as exc:
+            raise SectionPlanningError(index, result.section, "path extraction", exc) from exc
+    choices = []
+    if start_choice is not None:
+        choices.append(start_choice)
+    else:
+        distribution = results[0].start_mass.effective
+        selected = distribution.layer.states.index(results[0].path[0])
+        choices.append(EndpointChoice(
+            results[0].path[0], distribution, selected,
+            distribution.probabilities[selected],
+            "sample" if run_config.use_sampling else "joint_map",
+        ))
+    for index, result in enumerate(results[:-1]):
+        distribution = boundaries[index + 1]
+        selected = distribution.layer.states.index(result.path[-1])
+        choices.append(EndpointChoice(result.path[-1], distribution, selected,
+                                      distribution.probabilities[selected],
+                                      "sample" if run_config.use_sampling else "joint_map"))
+    if end_choice is not None:
+        choices.append(end_choice)
+    else:
+        distribution = results[-1].end_mass.effective
+        selected = distribution.layer.states.index(results[-1].path[-1])
+        choices.append(EndpointChoice(
+            results[-1].path[-1], distribution, selected,
+            distribution.probabilities[selected],
+            "sample" if run_config.use_sampling else "joint_map",
+        ))
+    combined = concatenate_section_paths(tuple(result.path for result in results))
+    joins = []
+    config = run_config.plan_config.stitching
+    for index, (left, right) in enumerate(zip(results, results[1:])):
+        incoming = stitch_cost(left.path[-2], left.path[-1], config, vocabs, run_config.edo)
+        outgoing = stitch_cost(right.path[0], right.path[1], config, vocabs, run_config.edo)
+        if max(incoming.total, outgoing.total) > config.max_cost:
+            join_error = ValueError("Selected join exceeds stitching tolerance.")
+            raise SectionPlanningError(index + 1, right.section, "join validation", join_error) from join_error
+        joins.append(SectionJoinDiagnostics(
+            left.section.name, right.section.name, right.section.start_time,
+            right.path[0], incoming, outgoing, config.max_cost,
+            len(boundaries[index + 1].layer), boundaries[index + 1].layer.states,
+            boundaries[index + 1].probabilities,
+        ))
+    layer_sizes = results[0].graph.diagnostics.layer_sizes + tuple(
+        size for result in results[1:] for size in result.graph.diagnostics.layer_sizes[1:]
+    )
+    diagnostics = MethodAPlanDiagnostics(
+        section_tags=tuple(section.name for section in sections),
+        target_tension_arcs=tuple(section.target_tension_arc for section in sections),
+        chosen_start_state=None if start_choice is None else start_choice.state,
+        chosen_end_state=None if end_choice is None else end_choice.state,
+        endpoint_selection_mode=(
+            "distribution" if start_choice is None else start_choice.selection_mode
+        ),
+        chosen_start_probability=(
+            None if start_choice is None else start_choice.selected_probability
+        ),
+        chosen_end_probability=(
+            None if end_choice is None else end_choice.selected_probability
+        ),
+        path_mode="sample" if run_config.use_sampling else "map", graph_layer_sizes=layer_sizes,
+        bridge_iterations=sum(result.sb_solution.trace.iterations for result in results),
+        bridge_converged=all(result.sb_solution.trace.converged for result in results),
+        rng_stream_ids=("endpoint_choice",) + tuple(result.rng_stream_id for result in results),
+        endpoint_mode=run_config.endpoint_mode.value,
+        endpoint_request_modified=any(
+            result.endpoint_resolution.request_modified for result in results
+        ),
+        endpoint_modifications=tuple(
+            f"section.{index}.{modification}"
+            for index, result in enumerate(results)
+            for modification in result.endpoint_resolution.modifications
+        ),
+        endpoint_start_feasible_mass=results[0].start_mass.feasible_mass,
+        endpoint_end_feasible_mass=results[-1].end_mass.feasible_mass,
+    )
+    edge_diagnostics = tuple(
+        replace(item, time_index=item.time_index + result.section.start_time)
+        for result in results for item in result.graph.diagnostics_for_path(result.path)
+    )
+    effective_endpoints = MethodAEndpoints(
+        pi0=results[0].start_mass.effective,
+        piT=replace(
+            results[-1].end_mass.effective,
+            layer=replace(results[-1].end_mass.effective.layer, time_index=run_config.total_beats),
+        ),
+        sections=endpoints.sections,
+    )
+    return SectionWisePlanResult(
+        run_config, tonal_context, vocabs, effective_endpoints, tuple(results), tuple(choices), tuple(joins),
+        combined, None if run_config.use_sampling else sum(result.path_score or 0.0 for result in results),
+        diagnostics, edge_diagnostics,
+    ), key.next_key()
 
 
 def render_exact_bridge_demo(
