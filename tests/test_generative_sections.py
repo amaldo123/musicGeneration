@@ -12,9 +12,9 @@ from aimusic.planning.plans import (
     MethodARunConfig,
     PlanningSection,
     TransitionDiagnostic,
-    get_section_at_time,
     run_method_a,
 )
+from aimusic.planning.sections import SectionTimeline
 from aimusic.scoring.tension import (
     compare_tension_curves,
     realized_tension_curve,
@@ -49,10 +49,12 @@ class TestGenerativeSections(unittest.TestCase):
             target_tension_arc=(0.8, 0.3),
         )
         sections = (section1, section2)
+        timeline = SectionTimeline(sections, total_beats=8)
 
-        self.assertEqual(get_section_at_time(sections, 2), section1)
-        self.assertEqual(get_section_at_time(sections, 5), section2)
-        self.assertIsNone(get_section_at_time(sections, 10))
+        self.assertEqual(timeline.at_state(2), section1)
+        self.assertEqual(timeline.at_state(5), section2)
+        with self.assertRaises(IndexError):
+            timeline.at_state(10)
 
         # Target tension interpolation
         t0_val = target_tension_at_time(sections, 0)
