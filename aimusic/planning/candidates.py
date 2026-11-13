@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 from aimusic.core.config import StyleConfig
 from aimusic.core.core_types import BeatState
 from aimusic.core.rng import RNGKey, shuffle
+from aimusic.planning.sections import key_ids_for_pcs
 from aimusic.scoring.gttm_features import beats_per_bar
 from aimusic.scoring.priors import NullPrior, Prior, PriorContext, PriorQuery, prior_logps
 from aimusic.theory.tonal import get_fifth_steps, nearest_roots
@@ -424,7 +425,7 @@ def propose_boundary_levels(
         is_start = getattr(section_view, "is_section_start", False)
     elif section is not None:
         sec = section
-        is_start = bool(t is not None and getattr(sec, "start_time", None) == t)
+        is_start = bool(t is not None and getattr(sec, "start_time", None) == t + 1)
 
     if (
         section_guided_proposals
@@ -485,8 +486,9 @@ def propose_key_ids(
     role_label = vocabularies.roles.token_for_id(next_role_id).label
     proposals = [prev_state.key_id]
     if section is not None and section.target_key_id is not None:
-        if vocabularies.keys.has_id(section.target_key_id):
-            proposals.insert(0, section.target_key_id)
+        target_ids = key_ids_for_pcs((section.target_key_id,), vocabularies)
+        for tid in reversed(target_ids):
+            proposals.insert(0, tid)
     if next_boundary_lvl >= 2 or role_label in {"change", "cad"}:
         for root_pc in nearest_roots(
             _key_root(prev_state, vocabularies), resolved_edo, limit=2
@@ -620,7 +622,7 @@ def _candidate_generator(
         is_start = getattr(section_view, "is_section_start", False)
     elif section is not None:
         sec = section
-        is_start = bool(t is not None and getattr(sec, "start_time", None) == t)
+        is_start = bool(t is not None and getattr(sec, "start_time", None) == t + 1)
 
     sec_meter_ids = (
         set(vocabs.meters.token_for_label(m).id for m in sec.allowed_meters if m in vocabs.meters.label_map)
@@ -639,11 +641,11 @@ def _candidate_generator(
         if section_guided_proposals and sec and sec.groove_family else None
     )
     sec_key_ids = (
-        set(sec.key_region)
+        set(key_ids_for_pcs(sec.key_region, vocabs))
         if section_guided_proposals and sec and sec.key_region is not None
         else (
-            {sec.target_key_id}
-            if section_guided_proposals and sec and sec.target_key_id is not None and vocabs.keys.has_id(sec.target_key_id)
+            set(key_ids_for_pcs((sec.target_key_id,), vocabs))
+            if section_guided_proposals and sec and sec.target_key_id is not None
             else None
         )
     )
@@ -780,7 +782,7 @@ def get_valid_next_states(
         is_start = getattr(effective_sec_view, "is_section_start", False)
     elif section is not None:
         sec = section
-        is_start = bool(t is not None and getattr(sec, "start_time", None) == t)
+        is_start = bool(t is not None and getattr(sec, "start_time", None) == t + 1)
 
     seen: set[BeatState] = set()
     accepted: list[BeatState] = []
@@ -833,7 +835,7 @@ def get_valid_next_states(
 
     # Section-start boundary level guarantee:
     target_bnd = getattr(sec, "boundary_level", 0) if sec is not None else 0
-    if is_start and target_bnd > 0:
+    if section_guided_proposals and is_start and target_bnd > 0:
         has_target_bnd = any(c.boundary_lvl == target_bnd for c in accepted)
         if not has_target_bnd:
             fallback_candidate = None

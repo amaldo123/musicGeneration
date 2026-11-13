@@ -654,7 +654,7 @@ def gen_comping(
     next_voicing = tuple(sorted(voices))
 
     events: list[NoteEvent] = []
-    offset_count = round(density * len(offsets))
+    offset_count = max(1, round(density * len(offsets)))
     for offset in offsets[:offset_count]:
         ton = (window.beat_index * ticks_per_beat) + (
             (ticks_per_beat // decode_config.subbeats_per_beat) * offset

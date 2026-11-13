@@ -319,10 +319,15 @@ The repository enforces a strict arrival-index convention across planning, scori
 | `section_style_components` | `Mapping[str, float]` | Unweighted style mismatch components (meter, groove, role, key, boundary, start alignment) | Component mismatch penalty in $[0, 1]$ |
 | `section_style_energy` | `float` | Total section-style energy $E_{\text{style}}$ | Dimensionless energy ($\ge 0$) |
 | `section_style_contribution` | `float` | Weighted section-style penalty: $\lambda_{\text{section\_style}} \cdot E_{\text{style}}$ | Log-weight penalty ($\ge 0$) |
-| `final_log_weight` | `float` | Edge log-weight in planning graph: $\text{data} + \text{gttm} - \text{target\_tension} - \text{section\_style}$ | Total edge log weight in SB bridge |
+| `stitch_cost` | `float` | Transition stitch penalty under active `StitchPolicy` | Log-weight penalty ($\ge 0$) |
+| `final_log_weight` | `float` | Edge log-weight in planning graph: $\text{data} + \text{gttm} - \text{target\_tension} - \text{section\_style} - \text{stitch\_cost}$ | Total edge log weight in SB bridge |
 | `right_context_states` | `Tuple[BeatState, ...]` | Successor lookahead states used for window averaging | Sequence of `BeatState`s |
 
 ### 8.3 Decomposition Invariant
 Every selected transition diagnostic must satisfy:
-$$\text{final\_log\_weight} = \text{data\_contribution} + \text{gttm\_contribution} - \text{target\_tension\_contribution} - \text{section\_style\_contribution}$$
+$$\text{final\_log\_weight} = \text{data\_contribution} + \text{gttm\_contribution} - \text{target\_tension\_contribution} - \text{section\_style\_contribution} - \text{stitch\_cost}$$
 within tolerance $\le 10^{-9}$.
+
+### 8.4 Tension Tracking Reference Fixture & Tolerance
+A two-section generative planning fixture is tested under Method A (`Section A`: beats 0–4, boundary level 2, target tension arc `(0.1, 0.3)`; `Section B`: beats 4–8, boundary level 3, target tension arc `(0.8, 0.9)`) with `seed=42`, `lambda_target_tension=6.0`, `sigma_tension=0.1`, and `lambda_section_style=0.0`. Under this reference configuration, the realized path achieves a mean absolute error (MAE) of ~0.147 (maximum absolute error ~0.303) relative to the interpolated target tension curve. The regression acceptance threshold is set to $\text{MAE} \le 0.19$, which reflects the empirical baseline plus a 25% tolerance margin rounded up to two decimal places.
+

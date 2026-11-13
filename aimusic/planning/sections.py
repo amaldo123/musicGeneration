@@ -35,6 +35,12 @@ class SectionPlanError(ValueError):
     """Raised when a section plan or section timeline violates structural rules."""
 
 
+def key_ids_for_pcs(pcs: Sequence[int], vocabularies: Vocabularies) -> tuple[int, ...]:
+    """Return the IDs of vocabularies.keys tokens whose root_pc is in pcs."""
+    pc_set = set(pcs)
+    return tuple(k.id for k in vocabularies.keys if k.root_pc in pc_set)
+
+
 @dataclass(frozen=True)
 class PlanningSection:
     """Single section descriptor for structural planning and generative section guidance."""

@@ -93,6 +93,7 @@ from aimusic.planning.sections import (
     PlanningSection,
     SectionPlanError,
     SectionTimeline,
+    key_ids_for_pcs,
 )
 
 
@@ -271,7 +272,8 @@ class TransitionDiagnostic:
     section_style_components: Mapping[str, float]
     section_style_energy: float
     section_style_contribution: float
-    final_log_weight: float
+    stitch_cost: float = 0.0
+    final_log_weight: float = 0.0
     right_context_states: Tuple[BeatState, ...] = ()
 
     def __post_init__(self) -> None:
@@ -297,6 +299,7 @@ class TransitionDiagnostic:
             "target_tension_contribution",
             "section_style_energy",
             "section_style_contribution",
+            "stitch_cost",
             "final_log_weight",
         ):
             val = getattr(self, name)
@@ -325,6 +328,7 @@ class TransitionDiagnostic:
             + self.gttm_contribution
             - self.target_tension_contribution
             - self.section_style_contribution
+            - self.stitch_cost
         )
         diff = abs(self.final_log_weight - expected)
         if diff > tol:
@@ -335,7 +339,8 @@ class TransitionDiagnostic:
                 f"Components: data_contribution={self.data_contribution:.6f}, "
                 f"gttm_contribution={self.gttm_contribution:.6f}, "
                 f"-target_tension_contribution={-self.target_tension_contribution:.6f}, "
-                f"-section_style_contribution={-self.section_style_contribution:.6f}"
+                f"-section_style_contribution={-self.section_style_contribution:.6f}, "
+                f"-stitch_cost={-self.stitch_cost:.6f}"
             )
         return True
 
@@ -363,6 +368,7 @@ class TransitionDiagnostic:
             "section_style_components": dict(self.section_style_components),
             "section_style_energy": self.section_style_energy,
             "section_style_contribution": self.section_style_contribution,
+            "stitch_cost": self.stitch_cost,
             "final_log_weight": self.final_log_weight,
             "right_context_states": [s.to_dict(vocabularies) for s in self.right_context_states],
             # Legacy fields for backward compatibility
@@ -419,13 +425,14 @@ class TransitionDiagnostic:
             s_energy = float(data.get("section_style_energy", s_contrib))
 
         style_components = dict(data.get("section_style_components", data.get("section_style_breakdown", {})))
+        stitch_cost = float(data.get("stitch_cost", 0.0))
 
         if "final_log_weight" in data:
             final_log_weight = float(data["final_log_weight"])
         elif "total_log_weight" in data:
             final_log_weight = float(data["total_log_weight"])
         else:
-            final_log_weight = float(data_contribution + gttm_contribution - t_contrib - s_contrib)
+            final_log_weight = float(data_contribution + gttm_contribution - t_contrib - s_contrib - stitch_cost)
 
         right_contexts_raw = data.get("right_context_states", ())
         right_contexts = tuple(_parse_beat_state(s) for s in right_contexts_raw)
@@ -452,6 +459,7 @@ class TransitionDiagnostic:
             section_style_components=style_components,
             section_style_energy=s_energy,
             section_style_contribution=s_contrib,
+            stitch_cost=stitch_cost,
             final_log_weight=final_log_weight,
             right_context_states=right_contexts,
         )
@@ -835,10 +843,9 @@ def _key_anchor_ids(
     vocabularies: Vocabularies,
     edo: Optional[int] = None,
 ) -> Tuple[int, ...]:
-    resolved_edo = run_config.edo if edo is None else edo
-    fifth = get_fifth_steps(resolved_edo) % resolved_edo
-    anchors = (0, fifth, resolved_edo // 2)
-    return tuple(dict.fromkeys(anchor % resolved_edo for anchor in anchors))
+    fifth = get_fifth_steps(run_config.edo) % len(vocabularies.keys)
+    anchors = (0, fifth, len(vocabularies.keys) // 2)
+    return tuple(dict.fromkeys(anchor % len(vocabularies.keys) for anchor in anchors))
 
 
 def _chord_id_for(key_id: int, quality: str, vocabularies: Vocabularies) -> int:
@@ -946,8 +953,10 @@ def _candidate_score(
                 d_min = min(tonal_distance(state_root, r, edo) for r in section.key_region)
                 key_affinity = 1.0 / (1.0 + float(d_min))
                 score += key_affinity * sw.key_region * weights.lambda_section_style
-            elif section.target_key_id is not None and state.key_id == section.target_key_id:
-                score += sw.key_region * weights.lambda_section_style
+            elif section.target_key_id is not None and vocabularies.keys.has_id(state.key_id):
+                state_root = vocabularies.keys.token_for_id(state.key_id).root_pc
+                if state_root == section.target_key_id:
+                    score += sw.key_region * weights.lambda_section_style
             if section.groove_family and vocabularies.grooves.has_id(state.groove_id):
                 groove_tok = vocabularies.grooves.token_for_id(state.groove_id)
                 if groove_tok.family == section.groove_family:
@@ -958,7 +967,7 @@ def _candidate_score(
                     score += sw.role * weights.lambda_section_style
             if section.boundary_level > 0 and state.boundary_lvl != section.boundary_level:
                 score -= sw.boundary * weights.lambda_section_style * abs(state.boundary_lvl - section.boundary_level)
-            if state.beat_in_bar != 0:
+            if is_start and state.beat_in_bar != 0:
                 is_multi = vocabularies.meters is not None and len(vocabularies.meters) > 1
                 align_factor = weights.multi_meter_alignment_factor if is_multi else 1.0
                 score -= sw.start_alignment * weights.lambda_section_style * align_factor
@@ -1027,11 +1036,13 @@ def _build_endpoint_distribution(
     key_ids = list(_key_anchor_ids(run_config, vocabularies, edo=resolved_edo))
     if has_style_guidance and sec is not None and sw.key_region > 0.0:
         if sec.key_region:
-            sec_keys = [k for k in sec.key_region if vocabularies.keys.has_id(k)]
+            sec_keys = key_ids_for_pcs(sec.key_region, vocabularies)
             if sec_keys:
-                key_ids = list(dict.fromkeys(sec_keys + key_ids))
-        elif sec.target_key_id is not None and vocabularies.keys.has_id(sec.target_key_id):
-            key_ids = list(dict.fromkeys([sec.target_key_id] + key_ids))
+                key_ids = list(dict.fromkeys(list(sec_keys) + key_ids))
+        elif sec.target_key_id is not None:
+            sec_keys = key_ids_for_pcs((sec.target_key_id,), vocabularies)
+            if sec_keys:
+                key_ids = list(dict.fromkeys(list(sec_keys) + key_ids))
 
     head_ids = (1, 2)
     chord_qualities = ("maj", "min")
@@ -1105,7 +1116,7 @@ def _build_endpoint_distribution(
             ]
             if pref_roles:
                 role_ids = tuple(dict.fromkeys(pref_roles + list(role_ids)))
-        if not is_start and boundary_level >= 2 and hasattr(vocabularies, "roles") and vocabularies.roles:
+        if has_style_guidance and not is_start and boundary_level >= 2 and hasattr(vocabularies, "roles") and vocabularies.roles:
             hold_token = vocabularies.roles.label_map.get("hold")
             if hold_token is not None:
                 role_ids = tuple(r for r in role_ids if r != hold_token.id)
@@ -1312,6 +1323,7 @@ def run_method_a(
     key: RNGKey,
     prior: Optional[Prior] = None,
     vocabularies: Optional[Vocabularies] = None,
+    stitch_policy: Optional[StitchPolicy] = None,
 ) -> tuple[MethodAPlanResult | SectionWisePlanResult, RNGKey]:
     """Run Method A from endpoint planning through SB path extraction."""
     if run_config.plan_config.sectioning_strategy is SectioningStrategy.SECTION_WISE:
@@ -1385,6 +1397,7 @@ def run_method_a(
             run_config.plan_config.section_guided_proposals
             or resolved_sb.section_guided_proposals
         ),
+        stitch_policy=stitch_policy,
     )
     _logger.info(f"Graph built: {len(graph.layers)} layers, {sum(len(l.states) for l in graph.layers)} states")
     # feasibility (L1 + L2 max-flow) -> fallback by policy -> build_sb_problem ->
@@ -1511,6 +1524,7 @@ def run_method_a(
             section_style_components=dict(edge_diag.section_style_components),
             section_style_energy=float(edge_diag.section_style_energy),
             section_style_contribution=float(edge_diag.section_style_contribution),
+            stitch_cost=float(getattr(edge_diag, "stitch_cost", 0.0)),
             final_log_weight=float(edge.log_weight),
             right_context_states=tuple(edge_diag.right_contexts),
         )

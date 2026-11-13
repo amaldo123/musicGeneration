@@ -6,7 +6,9 @@ import unittest
 from aimusic.core.config import (
     DecodeConfig,
     PriorWeights,
+    SBConfig,
     SectionStyleWeights,
+    StitchingConfig,
     StyleConfig,
 )
 from aimusic.core.core_types import BeatState
@@ -22,6 +24,7 @@ from aimusic.planning.candidates import (
 )
 from aimusic.planning.plans import MethodARunConfig, PlanningSection, run_method_a
 from aimusic.planning.sections import SectionPlanError, SectionTimeline
+from aimusic.planning.stitching import StitchPolicy
 from aimusic.scoring.priors import (
     NullPrior,
     PriorContext,
@@ -298,6 +301,25 @@ class TestReq04Core(unittest.TestCase):
                     if name.startswith("section")
                 ]
                 self.assertEqual(section_parameters, [])
+
+
+    def test_verify_decomposition_with_stitch_policy(self) -> None:
+        cfg = MethodARunConfig(
+            total_beats=4,
+            seed=42,
+            sb_config=SBConfig(horizon_t=4, k_max=16, d_max=4),
+        )
+        policy = StitchPolicy(
+            config=StitchingConfig(max_cost=100.0),
+            vocabularies=self.vocabs,
+            edo=12,
+            edge_times=(1,),
+        )
+        res, _ = run_method_a(cfg, key=RNGKey(42), stitch_policy=policy)
+        diags = res.diagnostics.transition_diagnostics
+        self.assertEqual(len(diags), 4)
+        for d in diags:
+            self.assertTrue(d.verify_decomposition())
 
 
 if __name__ == "__main__":

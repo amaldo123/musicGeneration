@@ -117,6 +117,10 @@ class SectionTokens:
     groove_family: Optional[str] = None
     allowed_meters: Tuple[str, ...] = ()
     key_region: Optional[Tuple[int, ...]] = None
+    boundary_level: Optional[int] = None
+    target_density: Optional[float] = None
+    preferred_roles: Optional[Tuple[str, ...]] = None
+    target_key_id: Optional[int] = None
 
     def __post_init__(self) -> None:
         _require_int("section_index", self.section_index, minimum=0)
@@ -142,6 +146,17 @@ class SectionTokens:
             for idx, k in enumerate(kr):
                 _require_int(f"key_region[{idx}]", k, minimum=0)
             object.__setattr__(self, "key_region", kr)
+        if self.boundary_level is not None:
+            _require_int("boundary_level", self.boundary_level, minimum=0)
+        if self.target_density is not None:
+            _require_real("target_density", self.target_density)
+        if self.preferred_roles is not None:
+            roles = tuple(self.preferred_roles)
+            for idx, r in enumerate(roles):
+                _require_non_empty_str(f"preferred_roles[{idx}]", r)
+            object.__setattr__(self, "preferred_roles", roles)
+        if self.target_key_id is not None:
+            _require_int("target_key_id", self.target_key_id, minimum=0)
 
     @classmethod
     def from_section_view(cls, view: EdgeSectionView) -> "SectionTokens":
@@ -159,6 +174,10 @@ class SectionTokens:
             groove_family=sec.groove_family,
             allowed_meters=tuple(sec.allowed_meters) if sec.allowed_meters is not None else (),
             key_region=tuple(sec.key_region) if sec.key_region is not None else None,
+            boundary_level=sec.boundary_level,
+            target_density=sec.target_density,
+            preferred_roles=tuple(sec.preferred_roles) if sec.preferred_roles is not None else None,
+            target_key_id=sec.target_key_id,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -172,12 +191,17 @@ class SectionTokens:
             "groove_family": self.groove_family,
             "allowed_meters": list(self.allowed_meters),
             "key_region": list(self.key_region) if self.key_region is not None else None,
+            "boundary_level": self.boundary_level,
+            "target_density": self.target_density,
+            "preferred_roles": list(self.preferred_roles) if self.preferred_roles is not None else None,
+            "target_key_id": self.target_key_id,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SectionTokens":
         allowed = data.get("allowed_meters")
         key_reg = data.get("key_region")
+        roles = data.get("preferred_roles")
         return cls(
             section_index=int(data["section_index"]),
             section_name=str(data["section_name"]),
@@ -188,6 +212,10 @@ class SectionTokens:
             groove_family=str(data["groove_family"]) if data.get("groove_family") is not None else None,
             allowed_meters=tuple(str(m) for m in allowed) if allowed is not None else (),
             key_region=tuple(int(k) for k in key_reg) if key_reg is not None else None,
+            boundary_level=int(data["boundary_level"]) if data.get("boundary_level") is not None else None,
+            target_density=float(data["target_density"]) if data.get("target_density") is not None else None,
+            preferred_roles=tuple(str(r) for r in roles) if roles is not None else None,
+            target_key_id=int(data["target_key_id"]) if data.get("target_key_id") is not None else None,
         )
 
 
@@ -995,15 +1023,6 @@ def with_section_terms(
         style_weights=weights.style_weights,
     )
     style_components = dict(style_breakdown)
-    style_components["weight_meter"] = float(weights.style_weights.meter)
-    style_components["weight_key_region"] = float(weights.style_weights.key_region)
-    style_components["weight_groove_family"] = float(weights.style_weights.groove_family)
-    style_components["weight_role"] = float(weights.style_weights.role)
-    style_components["weight_boundary"] = float(weights.style_weights.boundary)
-    alignment_weight = weights.style_weights.start_alignment * (
-        weights.multi_meter_alignment_factor if is_multi_meter else 1.0
-    )
-    style_components["weight_start_alignment"] = float(alignment_weight)
     section_style_contribution = float(weights.lambda_section_style * style_energy)
 
     final_log_weight = float(

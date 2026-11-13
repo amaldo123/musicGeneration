@@ -1,5 +1,6 @@
 import unittest
 from aimusic.core.config import (
+    PlanConfig,
     PriorWeights,
     SBConfig,
 )
@@ -137,7 +138,8 @@ class TestGenerativeSections(unittest.TestCase):
             seed=42,
             sections=custom_sections,
             prior_weights=w_zero,
-            sb_config=SBConfig(horizon_t=8, k_max=16, d_max=4),
+            plan_config=PlanConfig(section_guided_proposals=False),
+            sb_config=SBConfig(horizon_t=8, k_max=16, d_max=4, section_guided_proposals=False),
             endpoint_mode=EndpointMode.SINGLETON,
         )
         res_custom_zero, _ = run_method_a(cfg_custom_zero, key=self.key)
@@ -200,21 +202,28 @@ class TestGenerativeSections(unittest.TestCase):
 
     def test_section_boundary_alignment(self) -> None:
         """Section boundary level is specific to section boundaries, not repeated on every downbeat."""
-        sec = PlanningSection(name="A", start_time=0, end_time=8, boundary_level=3)
-        b_levels = []
-        for beat_in_bar in range(4):
-            proposals = get_valid_next_states(
-                BeatState(0, (beat_in_bar - 1) % 4, 0, 0, 0, 0, 0, 0),
-                t=beat_in_bar,
-                key=self.key,
-                d_max=8,
-                vocabularies=self.vocabs,
-                section=sec,
-                section_guided_proposals=True,
-            )[0]
-            b_levels.append(max(s.boundary_lvl for s in proposals.states))
-        self.assertEqual(b_levels[0], 3)  # Section boundary at start
-        self.assertLess(b_levels[1], 3)   # Non-boundary beats inside section
+        sec_b = PlanningSection(name="B", start_time=4, end_time=8, boundary_level=3)
+        proposals_start = get_valid_next_states(
+            BeatState(0, 3, 0, 0, 0, 0, 0, 0),
+            t=3,
+            key=self.key,
+            d_max=8,
+            vocabularies=self.vocabs,
+            section=sec_b,
+            section_guided_proposals=True,
+        )[0]
+        self.assertEqual(max(s.boundary_lvl for s in proposals_start.states), 3)
+
+        proposals_inside = get_valid_next_states(
+            BeatState(0, 0, 0, 0, 0, 0, 0, 0),
+            t=4,
+            key=self.key,
+            d_max=8,
+            vocabularies=self.vocabs,
+            section=sec_b,
+            section_guided_proposals=True,
+        )[0]
+        self.assertLess(max(s.boundary_lvl for s in proposals_inside.states), 3)
 
     def test_tension_tracking_error_reduction(self) -> None:
         """Enabling target tension reduces MAE compared to unconditioned generation."""
@@ -242,9 +251,33 @@ class TestGenerativeSections(unittest.TestCase):
         rep_on = compare_tension_curves(target, realized_tension_curve(res_on.path, self.vocabs, 12), sections)
 
         self.assertLess(rep_on.mean_absolute_error, rep_off.mean_absolute_error)
+        self.assertLessEqual(rep_on.mean_absolute_error, 0.19)
+
+    def test_path_level_section_boundary_alignment(self) -> None:
+        """Section starts at multiples of bar length have matching boundary level and beat_in_bar 0."""
+        sections = (
+            PlanningSection(name="A", start_time=0, end_time=4, boundary_level=2),
+            PlanningSection(name="B", start_time=4, end_time=8, boundary_level=3),
+        )
+        cfg = MethodARunConfig(
+            total_beats=8,
+            seed=42,
+            sections=sections,
+            plan_config=PlanConfig(section_guided_proposals=True),
+            sb_config=SBConfig(horizon_t=8, k_max=16, d_max=4, section_guided_proposals=True),
+        )
+        res, _ = run_method_a(cfg, key=self.key)
+        for sec in sections:
+            if sec.start_time > 0:
+                k = sec.start_time
+                self.assertEqual(res.path[k].boundary_lvl, sec.boundary_level)
+                self.assertEqual(res.path[k].beat_in_bar, 0)
 
     def test_feature_ablation_variants(self) -> None:
         """Verify feature ablation variants produce distinct paths and feature contributions."""
+        sections = (
+            PlanningSection(name="A", start_time=0, end_time=8, boundary_level=3, target_tension_arc=(0.2, 0.8)),
+        )
         weights_variants = [
             PriorWeights(lambda_target_tension=2.0, lambda_section_style=2.0),
             PriorWeights(lambda_target_tension=2.0, lambda_section_style=0.0),
@@ -254,11 +287,22 @@ class TestGenerativeSections(unittest.TestCase):
         paths = []
         for w in weights_variants:
             cfg = MethodARunConfig(
-                total_beats=8, seed=42, prior_weights=w,
+                total_beats=8, seed=42, sections=sections, prior_weights=w,
                 sb_config=SBConfig(horizon_t=8, k_max=16, d_max=4),
             )
             res, _ = run_method_a(cfg, key=self.key)
             paths.append(res.path)
+            diags = res.diagnostics.transition_diagnostics
+            sum_tension = sum(d.target_tension_contribution for d in diags)
+            sum_style = sum(d.section_style_contribution for d in diags)
+            if w.lambda_target_tension > 0.0:
+                self.assertGreater(sum_tension, 0.0)
+            else:
+                self.assertEqual(sum_tension, 0.0)
+            if w.lambda_section_style > 0.0:
+                self.assertGreater(sum_style, 0.0)
+            else:
+                self.assertEqual(sum_style, 0.0)
 
         self.assertEqual(len(paths), 4)
         # Paths with different conditioning weights should not all be identical
@@ -267,8 +311,11 @@ class TestGenerativeSections(unittest.TestCase):
 
     def test_transition_diagnostics_completeness(self) -> None:
         """Transition diagnostics record target tension, realized tension, deviation, and penalties."""
+        sections = (
+            PlanningSection(name="A", start_time=0, end_time=8, boundary_level=3, target_tension_arc=(0.2, 0.8)),
+        )
         cfg = MethodARunConfig(
-            total_beats=8, seed=42,
+            total_beats=8, seed=42, sections=sections,
             prior_weights=PriorWeights(lambda_target_tension=2.0, lambda_section_style=1.5),
             sb_config=SBConfig(horizon_t=8, k_max=16, d_max=4),
         )

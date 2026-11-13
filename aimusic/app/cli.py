@@ -208,7 +208,7 @@ def handle_generate(args: argparse.Namespace) -> None:
                 sys.exit(1)
 
         sections = tuple(parsed_sections)
-        if "--beats" not in sys.argv and sections:
+        if args.beats is None and sections:
             args.beats = sections[-1].end_time
 
         try:
@@ -216,6 +216,9 @@ def handle_generate(args: argparse.Namespace) -> None:
         except SectionPlanError as exc:
             print(f"SectionPlanError: {exc}", file=sys.stderr)
             sys.exit(1)
+
+    if args.beats is None:
+        args.beats = 8
 
     style_config = StyleConfig(
         allowed_meters=(args.meter,),
@@ -244,8 +247,8 @@ def handle_generate(args: argparse.Namespace) -> None:
     prior_weights = PriorWeights(
         lambda_data=getattr(args, "lambda_data", PriorWeights().lambda_data),
         lambda_gttm=getattr(args, "lambda_gttm", PriorWeights().lambda_gttm),
-        lambda_target_tension=getattr(args, "lambda_target_tension", 1.0),
-        lambda_section_style=getattr(args, "lambda_section_style", 1.0),
+        lambda_target_tension=getattr(args, "lambda_target_tension", 0.0),
+        lambda_section_style=getattr(args, "lambda_section_style", 0.0),
         sigma_tension=getattr(args, "sigma_tension", 0.1),
     )
     run_config = MethodARunConfig(
@@ -537,7 +540,7 @@ def main() -> None:
 
     gen_parser = subparsers.add_parser("generate", help="Generate a new score")
     gen_parser.add_argument("--seed", type=int, default=42)
-    gen_parser.add_argument("--beats", type=int, default=8)
+    gen_parser.add_argument("--beats", type=int, default=None)
     gen_parser.add_argument("--sections", nargs="+", help="Ordered section names; enables one SB solve per section.")
     gen_parser.add_argument("--max-horizon-per-solve", type=int, help="Maximum beat transitions in any one graph/SB solve.")
     gen_parser.add_argument("--edo", type=int, default=12)
@@ -570,8 +573,8 @@ def main() -> None:
         default=[],
         help="Treat the named symbolic track as percussion; repeatable.",
     )
-    gen_parser.add_argument("--lambda-target-tension", type=float, default=1.0, help="Weight for section target tension tracking.")
-    gen_parser.add_argument("--lambda-section-style", type=float, default=1.0, help="Weight for section style preference matching.")
+    gen_parser.add_argument("--lambda-target-tension", type=float, default=0.0, help="Weight for section target tension tracking.")
+    gen_parser.add_argument("--lambda-section-style", type=float, default=0.0, help="Weight for section style preference matching.")
     gen_parser.add_argument("--sigma-tension", type=float, default=0.1, help="Standard deviation parameter for tension tracking penalty.")
     gen_parser.add_argument(
         "--section-guided-proposals",

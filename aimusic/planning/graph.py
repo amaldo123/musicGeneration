@@ -837,7 +837,6 @@ def build_sparse_graph(
             if not resolved_section_guided_proposals and weights is not None:
                 pass1_weights = replace(
                     weights,
-                    lambda_target_tension=0.0,
                     style_weights=replace(
                         weights.style_weights,
                         groove_family=0.0,
@@ -882,7 +881,8 @@ def build_sparse_graph(
             if len(source_edges) > resolved_sb.d_max:
                 outdegree_pruned_count += len(source_edges) - resolved_sb.d_max
             if (
-                edge_sec_view is not None
+                resolved_section_guided_proposals
+                and edge_sec_view is not None
                 and edge_sec_view.is_section_start
                 and getattr(edge_sec_view.section, "boundary_level", 0) > 0
             ):
@@ -923,7 +923,8 @@ def build_sparse_graph(
                     ),
                 )
                 if (
-                    edge_sec_view is not None
+                    resolved_section_guided_proposals
+                    and edge_sec_view is not None
                     and edge_sec_view.is_section_start
                     and getattr(edge_sec_view.section, "boundary_level", 0) > 0
                 ):
